@@ -1,6 +1,8 @@
 FROM python:3.12-slim
 
-ENV PYTHONUNBUFFERED=1
+ENV PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_DEFAULT_TIMEOUT=120
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
@@ -10,7 +12,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir flask werkzeug psutil numpy yt-dlp
+RUN set -eux; \
+    for attempt in 1 2 3 4 5; do \
+      if pip install --retries 10 --timeout 120 flask werkzeug psutil numpy yt-dlp; then \
+        rm -rf /root/.cache/pip; \
+        break; \
+      fi; \
+      if [ "$attempt" = "5" ]; then \
+        echo "pip install falhou após 5 tentativas" >&2; \
+        exit 1; \
+      fi; \
+      sleep $((attempt * 5)); \
+    done
 
 COPY app.py.gz.b85 /tmp/app.py.gz.b85
 COPY templates.tar.gz.b85 /tmp/templates.tar.gz.b85
