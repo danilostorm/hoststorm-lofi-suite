@@ -1,0 +1,33 @@
+# Segredos locais
+.env
+.env.*
+!.env.example
+
+# Dados persistentes / mídia
+loop-studio/uploads/
+loop-studio/outputs/
+loop-studio/logos/
+multi-live/media/
+multi-live/data/
+multi-live/logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Backups locais
+*.bak*
+*.backup
+*~
+
+# Sistema / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Artefatos compactados
+*.zip
+*.tar
+*.tar.gz
