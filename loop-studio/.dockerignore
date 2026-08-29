@@ -1,0 +1,10 @@
+uploads/
+outputs/
+logos/
+templates/
+app.py
+__pycache__/
+*.py[cod]
+*.bak*
+*.backup
+.DS_Store
