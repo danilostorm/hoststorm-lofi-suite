@@ -19,7 +19,6 @@ services:
       - ./loop-studio/uploads:/app/uploads
       - ./loop-studio/outputs:/app/outputs
       - ./loop-studio/logos:/app/logos
-      - ./loop-studio/templates:/app/templates:ro
 
   multi-live:
     build:
@@ -41,4 +40,3 @@ services:
       - ./multi-live/media:/app/media
       - ./multi-live/data:/app/data
       - ./multi-live/logs:/app/logs
-      - ./multi-live/templates:/app/templates:ro
