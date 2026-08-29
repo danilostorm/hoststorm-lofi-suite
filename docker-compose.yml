@@ -1,0 +1,44 @@
+services:
+  loop-studio:
+    build:
+      context: ./loop-studio
+    container_name: hoststorm-lofi-loop-studio
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    environment:
+      TZ: America/Sao_Paulo
+      LV2_ADMIN_USER: ${LV2_ADMIN_USER:-admin}
+      LV2_ADMIN_PASSWORD: ${LV2_ADMIN_PASSWORD}
+    ports:
+      - "3035:3035"
+    volumes:
+      - ./loop-studio/uploads:/app/uploads
+      - ./loop-studio/outputs:/app/outputs
+      - ./loop-studio/logos:/app/logos
+      - ./loop-studio/templates:/app/templates:ro
+
+  multi-live:
+    build:
+      context: ./multi-live
+    container_name: hoststorm-multi-live-manager
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    environment:
+      TZ: America/Sao_Paulo
+      LV2_ADMIN_USER: ${LV2_ADMIN_USER:-admin}
+      LV2_ADMIN_PASSWORD: ${LV2_ADMIN_PASSWORD}
+    ports:
+      - "3040:3040"
+    volumes:
+      - ./multi-live/media:/app/media
+      - ./multi-live/data:/app/data
+      - ./multi-live/logs:/app/logs
+      - ./multi-live/templates:/app/templates:ro
