@@ -7,7 +7,9 @@ Suite para criação de loops longos e gerenciamento de múltiplas lives RTMP.
 - **Loop Studio** — porta `3035`
 - **Multi Live Manager** — porta `3040`
 
-O Multi Live Manager inclui lives 24/7 e **Lives Agendadas** por dia da semana, horário e vídeo da biblioteca. Para cada agendamento local, o sistema mede a duração do vídeo com `ffprobe` e encerra a transmissão **60 segundos antes do fim**.
+O Multi Live Manager inclui lives 24/7 e **Lives Agendadas** por dia da semana, horário, vídeo da biblioteca e **plataformas específicas para cada agenda**. Exemplo: uma agenda pode transmitir somente na Twitch, enquanto outra usa Kick + YouTube. A seleção da agenda não altera os destinos usados pela live manual.
+
+Para cada agendamento local, o sistema mede a duração do vídeo com `ffprobe` e encerra a transmissão **60 segundos antes do fim**.
 
 ## Como o código é versionado
 
