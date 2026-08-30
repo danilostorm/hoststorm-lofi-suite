@@ -5,7 +5,7 @@ on:
     branches:
       - v2-manager
     paths:
-      - '.v2_payload.part8b'
+      - '.v2_bootstrap_trigger'
 
 permissions:
   contents: write
@@ -30,7 +30,8 @@ jobs:
           rm -f multi-live/patch_schedule_v3.py
           rm -f multi-live/patch_schedule_v4.py
           rm -f multi-live/patch_panel_v6.py
-          rm -f .v2_payload.part{1..8} .v2_payload.part8a .v2_payload.part8b
+          rm -f .v2_payload.part{1..8} .v2_payload.part8a .v2_payload.part8b .v2_bootstrap_trigger
+          rm -f .github/workflows/ci.yml
 
       - name: Test v2 source
         env:
@@ -46,7 +47,6 @@ jobs:
 
       - name: Commit normal source
         run: |
-          rm -f .github/workflows/bootstrap-v2.yml
           git config user.name "HostStorm V2 Bootstrap"
           git config user.email "actions@users.noreply.github.com"
           git add -A
