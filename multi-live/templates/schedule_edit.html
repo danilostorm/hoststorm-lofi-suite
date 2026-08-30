@@ -1,0 +1,30 @@
+{% extends 'base.html' %}
+{% block title %}{% if schedule %}Editar agenda{% else %}Nova agenda{% endif %} • HostStorm{% endblock %}
+{% block heading %}{% if schedule %}Editar agendamento{% else %}Novo agendamento{% endif %}{% endblock %}
+{% block subheading %}Escolha recorrência, playlist, plataformas e comportamento em caso de conflito.{% endblock %}
+{% block content %}
+<form class="form-layout" action="{{ url_for('web.schedule_save') }}" method="post">
+  {% if schedule %}<input type="hidden" name="id" value="{{ schedule.id }}">{% endif %}
+  <section class="panel"><div class="panel-head"><div><h2>Quando transmitir</h2><p>Todos os horários usam America/Sao_Paulo.</p></div></div>
+    <label>Canal<select name="channel_id" required>{% for cid,ch in channels.items() %}<option value="{{ cid }}" {% if selected_channel==cid %}selected{% endif %}>{{ ch.name }}</option>{% endfor %}</select></label>
+    <label>Nome da agenda<input name="name" value="{{ schedule.name if schedule else '' }}" placeholder="Ex.: Sábado Kick"></label>
+    <div class="form-grid two"><label>Tipo<select name="kind" id="scheduleKind"><option value="weekly" {% if not schedule or schedule.kind=='weekly' %}selected{% endif %}>Semanal</option><option value="daily" {% if schedule and schedule.kind=='daily' %}selected{% endif %}>Todos os dias</option><option value="weekdays" {% if schedule and schedule.kind=='weekdays' %}selected{% endif %}>Segunda a sexta</option><option value="once" {% if schedule and schedule.kind=='once' %}selected{% endif %}>Data única</option></select></label><label>Horário Brasil<input type="time" name="time" value="{{ schedule.time if schedule else '' }}" required step="60"></label></div>
+    <div class="weekday-picker" id="weekdayPicker">{% for day in weekday_labels %}<label><input type="checkbox" name="weekdays" value="{{ loop.index0 }}" {% if schedule and loop.index0 in schedule.weekdays %}checked{% endif %}><span>{{ day[:3] }}</span></label>{% endfor %}</div>
+    <label id="runDateField">Data da execução<input type="date" name="run_date" value="{{ schedule.run_date if schedule else '' }}"></label>
+    <div class="form-grid two"><label>Iniciar validade em<input type="date" name="start_date" value="{{ schedule.start_date if schedule else '' }}"></label><label>Encerrar validade em<input type="date" name="end_date" value="{{ schedule.end_date if schedule else '' }}"></label></div>
+    <label class="check-row"><input type="checkbox" name="enabled" {% if not schedule or schedule.enabled %}checked{% endif %}> Agendamento ativo</label>
+  </section>
+  <section class="panel"><div class="panel-head"><div><h2>Playlist</h2><p>Selecione um ou mais vídeos; a ordem segue a biblioteca.</p></div></div>
+    <div class="media-selector">{% for v in videos %}<label><input type="checkbox" name="media" value="{{ v }}" {% if schedule and v in schedule.media %}checked{% endif %}><span>🎬 {{ v }}</span></label>{% else %}<div class="empty-state">Envie vídeos para a biblioteca primeiro.</div>{% endfor %}</div>
+    <div class="form-grid two"><label class="check-row"><input type="checkbox" name="shuffle" {% if schedule and schedule.shuffle %}checked{% endif %}> Embaralhar playlist</label><label class="check-row"><input type="checkbox" name="repeat_playlist" {% if schedule and schedule.repeat_playlist %}checked{% endif %}> Repetir playlist</label></div>
+    <div class="form-grid two"><label>Parar antes do fim (segundos)<input type="number" min="0" max="600" name="stop_before_seconds" value="{{ schedule.stop_before_seconds if schedule else 60 }}"></label><label>Duração máxima se repetir (min)<input type="number" min="0" name="max_duration_minutes" value="{{ schedule.max_duration_minutes if schedule else 0 }}" placeholder="0 = duração da playlist"></label></div>
+  </section>
+  <section class="panel"><div class="panel-head"><div><h2>Plataformas</h2><p>Essa seleção é exclusiva desta agenda.</p></div></div>
+    {% set ch=channels.get(selected_channel) %}<div class="platform-picker">{% for slug,d in (ch.destinations if ch else {}).items() %}<label><input type="checkbox" name="platforms" value="{{ slug }}" {% if schedule and slug in schedule.platforms %}checked{% elif not schedule and d.enabled %}checked{% endif %}><span>{{ d.label }}</span></label>{% endfor %}</div>
+    <label>Se o canal já estiver ao vivo<select name="conflict_policy"><option value="skip" {% if not schedule or schedule.conflict_policy=='skip' %}selected{% endif %}>Pular esta agenda</option><option value="stop_current" {% if schedule and schedule.conflict_policy=='stop_current' %}selected{% endif %}>Encerrar a atual e iniciar esta</option><option value="wait" {% if schedule and schedule.conflict_policy=='wait' %}selected{% endif %}>Aguardar a live atual terminar</option></select></label>
+  </section>
+  {% if schedule %}<section class="panel"><div class="panel-head"><div><h2>Última execução</h2></div></div><div class="detail-list"><div><span>Status</span><strong>{{ schedule.last_status or '-' }}</strong></div><div><span>Início</span><strong>{{ schedule.last_started_at|datetime_br }}</strong></div><div><span>Fim</span><strong>{{ schedule.last_finished_at|datetime_br }}</strong></div></div></section>{% endif %}
+  <div class="sticky-save"><button class="btn primary">Salvar agenda</button><button class="btn ghost" name="run_preflight" value="1">Salvar + pré-teste</button>{% if schedule %}<button class="btn success" type="submit" formaction="{{ url_for('web.schedule_run_now',sid=schedule.id) }}" formmethod="post">▶ Executar agora</button>{% endif %}</div>
+</form>
+{% if schedule %}<div class="page-actions"><form action="{{ url_for('web.schedule_toggle',sid=schedule.id) }}" method="post"><button class="btn ghost">{% if schedule.enabled %}Pausar{% else %}Ativar{% endif %}</button></form><form action="{{ url_for('web.schedule_delete',sid=schedule.id) }}" method="post" onsubmit="return confirm('Excluir este agendamento?')"><button class="btn danger">Excluir agenda</button></form></div>{% endif %}
+{% endblock %}

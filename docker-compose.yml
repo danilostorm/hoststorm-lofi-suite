@@ -24,6 +24,8 @@ services:
     build:
       context: ./multi-live
     container_name: hoststorm-multi-live-manager
+    init: true
+    stop_grace_period: 15s
     logging:
       driver: "json-file"
       options:
@@ -34,6 +36,10 @@ services:
       TZ: America/Sao_Paulo
       LV2_ADMIN_USER: ${LV2_ADMIN_USER:-admin}
       LV2_ADMIN_PASSWORD: ${LV2_ADMIN_PASSWORD}
+      LV2_MAX_UPLOAD_GB: ${LV2_MAX_UPLOAD_GB:-40}
+      LV2_SCHEDULER_GRACE_SECONDS: ${LV2_SCHEDULER_GRACE_SECONDS:-120}
+      LV2_SCHEDULER_INTERVAL_SECONDS: ${LV2_SCHEDULER_INTERVAL_SECONDS:-5}
+      LV2_SUPERVISOR_INTERVAL_SECONDS: ${LV2_SUPERVISOR_INTERVAL_SECONDS:-5}
     ports:
       - "3040:3040"
     volumes:

@@ -1,0 +1,7 @@
+{% extends 'base.html' %}
+{% block title %}Logs • HostStorm{% endblock %}
+{% block heading %}Logs e auditoria{% endblock %}
+{% block subheading %}FFmpeg bruto para diagnóstico e eventos amigáveis do sistema.{% endblock %}
+{% block content %}
+<div class="log-grid"><section class="panel"><div class="panel-head"><div><h2>Log FFmpeg</h2></div></div><form method="get" class="log-select"><select name="channel" onchange="this.form.submit()"><option value="">Escolha o canal</option>{% for cid,ch in channels.items() %}<option value="{{ cid }}" {% if selected==cid %}selected{% endif %}>{{ ch.name }}</option>{% endfor %}</select>{% if selected %}<button formaction="{{ url_for('web.log_clear',cid=selected) }}" formmethod="post" class="btn danger">Limpar</button>{% endif %}</form><pre class="log-box">{{ log_text or 'Selecione um canal.' }}</pre></section><section class="panel"><div class="panel-head"><div><h2>Auditoria</h2><p>Eventos do agendador e supervisor.</p></div></div><div class="audit-list">{% for a in audit %}<div class="audit-item"><span class="audit-level {{ a.level }}"></span><div><strong>{{ a.event_type }}</strong><p>{{ a.message }}</p><small>{{ a.created_at|datetime_br }}{% if a.channel_id %} • {{ a.channel_id }}{% endif %}</small></div></div>{% endfor %}</div></section></div>
+{% endblock %}

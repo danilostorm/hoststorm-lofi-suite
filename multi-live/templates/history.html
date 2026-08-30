@@ -1,0 +1,7 @@
+{% extends 'base.html' %}
+{% block title %}Histórico • HostStorm{% endblock %}
+{% block heading %}Histórico de transmissões{% endblock %}
+{% block subheading %}Inícios, términos, falhas e tentativas de recuperação por plataforma.{% endblock %}
+{% block content %}
+<div class="table-wrap panel"><table><thead><tr><th>Canal</th><th>Tipo</th><th>Plataformas</th><th>Início</th><th>Fim</th><th>Status</th><th>Detalhes</th></tr></thead><tbody>{% for h in history %}<tr><td><strong>{{ h.channel_name or h.channel_id }}</strong><small>{{ h.media_label }}</small></td><td>{{ h.trigger }}</td><td><div class="platform-line">{% for p in h.platforms %}<span class="platform-chip">{{ p }}</span>{% endfor %}</div></td><td>{{ h.started_at|datetime_br }}</td><td>{{ h.ended_at|datetime_br }}</td><td><span class="status-pill {{ h.status }}">{{ h.status }}</span></td><td>{% for p in h.platform_runs %}<div class="platform-run"><b>{{ p.slug }}</b> {{ p.status }}{% if p.retries %} • {{ p.retries }} retry{% endif %}{% if p.last_error %}<small>{{ p.last_error }}</small>{% endif %}</div>{% endfor %}</td></tr>{% else %}<tr><td colspan="7" class="empty-state">Sem histórico.</td></tr>{% endfor %}</tbody></table></div>
+{% endblock %}

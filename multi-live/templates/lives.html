@@ -1,0 +1,15 @@
+{% extends 'base.html' %}
+{% block title %}Lives • HostStorm{% endblock %}
+{% block heading %}Lives{% endblock %}
+{% block subheading %}Inicie, pare e acompanhe cada canal sem abrir todas as configurações.{% endblock %}
+{% block content %}
+<div class="toolbar panel"><form class="inline-create" action="{{ url_for('web.live_create') }}" method="post"><input name="name" placeholder="Nome da nova live" required><button class="btn primary">+ Criar live</button></form><input id="liveSearch" class="search-input" placeholder="Buscar canal..."></div>
+<div class="channel-grid" id="channelGrid">
+{% for cid,ch in channels.items() %}<article class="channel-card" data-name="{{ ch.name|lower }}">
+  <div class="channel-card-head"><div><span class="status-pill {% if ch.running %}live{% else %}offline{% endif %}" data-status-id="{{ cid }}">{% if ch.running %}● AO VIVO{% else %}PARADA{% endif %}</span><h2>{{ ch.name }}</h2></div><a class="icon-link" href="{{ url_for('web.live_edit',cid=cid) }}">⚙</a></div>
+  <div class="channel-summary"><div><span>Fonte</span><strong>{% if ch.source_mode=='url' %}URL externa{% else %}{{ ch.video or 'não definida' }}{% endif %}</strong></div><div><span>Formato</span><strong>{{ ch.resolution }} • {{ ch.fps }} FPS</strong></div><div><span>Agendas</span><strong>{{ ch.schedules|length }}</strong></div></div>
+  <div class="platform-line runtime-platforms" data-platforms-id="{{ cid }}">{% for slug,d in ch.destinations.items() %}{% if d.enabled %}<span class="platform-chip {% if ch.runtime.platforms.get(slug,{}).running %}ok{% endif %}">{{ d.label }}</span>{% endif %}{% endfor %}</div>
+  <div class="card-actions">{% if ch.running %}<form action="{{ url_for('web.live_stop',cid=cid) }}" method="post"><button class="btn danger full">■ Parar</button></form>{% else %}<form action="{{ url_for('web.live_start',cid=cid) }}" method="post"><button class="btn success full">▶ Iniciar 24/7</button></form>{% endif %}<a class="btn ghost full" href="{{ url_for('web.live_edit',cid=cid) }}">Configurar</a></div>
+</article>{% else %}<div class="empty-state panel">Nenhum canal criado.</div>{% endfor %}
+</div>
+{% endblock %}

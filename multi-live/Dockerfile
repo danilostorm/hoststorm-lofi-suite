@@ -2,40 +2,31 @@ FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_DEFAULT_TIMEOUT=120
+    PIP_DEFAULT_TIMEOUT=120 \
+    TZ=America/Sao_Paulo
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
-    procps \
-    ca-certificates \
+    ffmpeg procps ca-certificates tzdata curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-
+COPY requirements.txt /app/requirements.txt
 RUN set -eux; \
     for attempt in 1 2 3 4 5; do \
-      if pip install --retries 10 --timeout 120 flask werkzeug psutil numpy yt-dlp; then \
-        rm -rf /root/.cache/pip; \
-        break; \
-      fi; \
-      if [ "$attempt" = "5" ]; then \
-        echo "pip install falhou após 5 tentativas" >&2; \
-        exit 1; \
-      fi; \
+      if pip install --retries 10 --timeout 120 -r /app/requirements.txt; then break; fi; \
+      if [ "$attempt" = "5" ]; then exit 1; fi; \
       sleep $((attempt * 5)); \
-    done
+    done; \
+    rm -rf /root/.cache/pip
 
-COPY app.py.gz.b85 /tmp/app.py.gz.b85
-COPY templates.tar.gz.b85 /tmp/templates.tar.gz.b85
-COPY patch_schedule_v3.py /tmp/patch_schedule_v3.py
-COPY patch_schedule_v4.py /tmp/patch_schedule_v4.py
-COPY patch_panel_v6.py /tmp/patch_panel_v6.py
+COPY app.py /app/app.py
+COPY hoststorm /app/hoststorm
+COPY templates /app/templates
+COPY static /app/static
+COPY VERSION /app/VERSION
 
-RUN python -c "import base64,gzip,pathlib; p=pathlib.Path('/tmp/app.py.gz.b85'); pathlib.Path('/app/app.py').write_bytes(gzip.decompress(base64.b85decode(p.read_bytes())))"
-RUN python -c "import base64,io,tarfile,pathlib; data=base64.b85decode(pathlib.Path('/tmp/templates.tar.gz.b85').read_bytes()); pathlib.Path('/app/templates').mkdir(parents=True,exist_ok=True); tarfile.open(fileobj=io.BytesIO(data),mode='r:gz').extractall('/app/templates')"
-RUN python /tmp/patch_schedule_v3.py
-RUN python /tmp/patch_schedule_v4.py
-RUN python /tmp/patch_panel_v6.py
-RUN python -m py_compile /app/app.py && rm -f /tmp/app.py.gz.b85 /tmp/templates.tar.gz.b85 /tmp/patch_schedule_v3.py /tmp/patch_schedule_v4.py /tmp/patch_panel_v6.py
+RUN python -m compileall -q /app/app.py /app/hoststorm
 
+EXPOSE 3040
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 CMD curl -fsS http://127.0.0.1:3040/healthz || exit 1
 CMD ["python", "app.py"]

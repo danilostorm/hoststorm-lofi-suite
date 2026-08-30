@@ -1,126 +1,81 @@
 # HostStorm Lo-fi Suite
 
-Suite para criação de loops longos e gerenciamento de múltiplas lives RTMP.
+Suite para criação de loops e gerenciamento de múltiplas transmissões RTMP no Unraid.
+
+## HostStorm Multi Live Manager 2.0
+
+A versão 2.0 reorganiza o Multi Live como uma aplicação normal e modular. O código do Multi Live agora fica diretamente no Git (`app.py`, pacote `hoststorm/`, `templates/` e `static/`), sem Base85 e sem patches aplicados durante o build.
+
+### Principais recursos
+
+- Dashboard com lives ativas, próxima agenda, agenda do dia, CPU, RAM, disco e histórico.
+- Página separada para Lives, Agendamentos, Biblioteca, Histórico, Logs e Configurações.
+- SQLite em `/app/data/hoststorm.db` com WAL, histórico e auditoria.
+- Migração automática do antigo `/app/data/channels.json`, preservando um backup `channels.json.pre-v2-backup`.
+- Agendamento semanal, diário, segunda a sexta e data única.
+- Vários dias por agenda, intervalo de validade e políticas de conflito.
+- Plataformas independentes por agendamento.
+- Playlist com vários vídeos, embaralhamento e repetição.
+- Encerramento configurável antes do fim da mídia; padrão continua em 60 segundos.
+- Pré-teste de mídia, FFmpeg/FFprobe e destinos RTMP.
+- Biblioteca com preview, duração, resolução, codec, FPS, tamanho, SHA-256 e detecção de duplicados.
+- Histórico de execuções e histórico individual por plataforma.
+- Cada plataforma usa seu próprio processo FFmpeg: se Twitch cair, Twitch é recuperada sem derrubar Kick/YouTube.
+- Backoff de recuperação: 5s, 15s, 30s e 60s.
+- Notificações opcionais via Telegram, Discord e webhook genérico.
+- Atualização de status em tempo real via SSE + API de status.
+- Scripts de atualização e rollback com health check.
+- GitHub Actions com testes, compilação e Docker build.
 
 ## Serviços
 
-- **Loop Studio** — porta `3035`
-- **Multi Live Manager** — porta `3040`
+- Loop Studio: `3035`
+- Multi Live Manager: `3040`
 
-O Multi Live Manager inclui lives 24/7 e **Lives Agendadas** por dia da semana, horário, vídeo da biblioteca e **plataformas específicas para cada agenda**. Exemplo: uma agenda pode transmitir somente na Twitch, enquanto outra usa Kick + YouTube. A seleção da agenda não altera os destinos usados pela live manual.
-
-Para cada agendamento local, o sistema mede a duração do vídeo com `ffprobe` e encerra a transmissão **60 segundos antes do fim**.
-
-## Como o código é versionado
-
-Os arquivos de aplicação e templates são armazenados em bundles Base85 compactados:
-
-- `loop-studio/app.py.gz.b85`
-- `loop-studio/templates.tar.gz.b85`
-- `multi-live/app.py.gz.b85`
-- `multi-live/templates.tar.gz.b85`
-
-Os Dockerfiles reconstruem `app.py` e `templates/` automaticamente durante `docker compose build`. Isso também evita conflito com cópias antigas que já existam no diretório do Unraid.
-
-Para reconstruir os arquivos localmente para inspeção, use:
-
-```bash
-python3 scripts/unpack-source.py
-```
-
-## Dados persistentes
-
-As pastas abaixo **não são versionadas** e permanecem no servidor durante `git pull`:
-
-- `loop-studio/uploads/`
-- `loop-studio/outputs/`
-- `loop-studio/logos/`
-- `multi-live/media/`
-- `multi-live/data/`
-- `multi-live/logs/`
-
-O arquivo `.env` também não é versionado.
-
-## Vincular a instalação existente do Unraid ao GitHub
-
-O diretório usado no servidor é:
+## Atualizar no Unraid
 
 ```bash
 cd /mnt/user/appdata/hoststorm-lofi-suite
+bash scripts/update.sh
 ```
 
-Antes da primeira sincronização, faça pelo menos um backup das configurações/dados importantes. Em seguida:
+O script:
+
+1. salva backup do SQLite existente;
+2. marca a imagem Docker atual como rollback;
+3. executa `git pull --ff-only`;
+4. constrói o Multi Live;
+5. recria o container;
+6. verifica `/healthz`;
+7. executa rollback automaticamente se o serviço novo não ficar saudável.
+
+Rollback manual:
 
 ```bash
 cd /mnt/user/appdata/hoststorm-lofi-suite
-
-git init
-git branch -M main
-git remote remove origin 2>/dev/null || true
-git remote add origin https://github.com/danilostorm/hoststorm-lofi-suite.git
-git fetch origin
-git reset --hard origin/main
+bash scripts/rollback.sh
 ```
 
-As pastas de mídia, dados, logs e outputs são ignoradas pelo Git e não são apagadas por essa sincronização.
-
-## Configurar login
-
-Depois da primeira sincronização:
-
-```bash
-cd /mnt/user/appdata/hoststorm-lofi-suite
-cp -n .env.example .env
-nano .env
-```
-
-No `.env`, configure:
-
-```env
-LV2_ADMIN_USER=admin
-LV2_ADMIN_PASSWORD=SUA_SENHA_FORTE
-```
-
-Você pode usar a mesma senha que já utilizava no painel ou definir uma nova. O `.env` não deve ser enviado ao GitHub.
-
-## Subir a versão nova
-
-```bash
-cd /mnt/user/appdata/hoststorm-lofi-suite
-docker compose up -d --build
-```
-
-Verifique:
-
-```bash
-docker compose ps
-docker compose logs --tail=100 multi-live
-```
-
-## Atualizações futuras
-
-Depois dessa configuração inicial, a atualização fica simples:
+## Atualização manual
 
 ```bash
 cd /mnt/user/appdata/hoststorm-lofi-suite
 git pull --ff-only
-docker compose up -d --build
+docker compose build multi-live
+docker compose up -d --force-recreate multi-live
+curl -fsS http://127.0.0.1:3040/healthz
 ```
 
-Para acompanhar os logs:
+## Dados persistentes
 
-```bash
-docker compose logs --tail=100 -f
-```
+O Git não altera:
 
-## Copiar outputs do Loop Studio para o Multi Live
+- `multi-live/data/`
+- `multi-live/media/`
+- `multi-live/logs/`
+- `loop-studio/uploads/`
+- `loop-studio/outputs/`
+- `loop-studio/logos/`
+- `.env`
 
-```bash
-bash scripts/copy-loop-outputs-to-multi.sh
-```
-
-O script usa por padrão `/mnt/user/appdata/hoststorm-lofi-suite`. Se necessário, é possível trocar a raiz com a variável `HOSTSTORM_BASE`.
-
-## Importante
-
-Nunca envie `.env`, `multi-live/data/`, mídia, logs ou arquivos contendo chaves RTMP ao repositório.
+Nunca envie stream keys ou `.env` ao repositório.

@@ -1,0 +1,13 @@
+(()=>{
+  const $=(q,root=document)=>root.querySelector(q); const $$=(q,root=document)=>[...root.querySelectorAll(q)];
+  const menu=$('#menuButton'); if(menu) menu.addEventListener('click',()=>$('.sidebar')?.classList.toggle('open'));
+  const search=$('#liveSearch'); if(search) search.addEventListener('input',()=>{const q=search.value.toLowerCase();$$('.channel-card').forEach(el=>el.hidden=!el.dataset.name.includes(q));});
+  function setScheduleFields(){const kind=$('#scheduleKind');if(!kind)return;const weekly=$('#weekdayPicker'),once=$('#runDateField');weekly.style.display=kind.value==='weekly'?'flex':'none';once.style.display=kind.value==='once'?'grid':'none';}
+  $('#scheduleKind')?.addEventListener('change',setScheduleFields); setScheduleFields();
+  $$('[data-preflight]').forEach(btn=>btn.addEventListener('click',async()=>{btn.disabled=true;btn.textContent='Testando...';try{const r=await fetch('/api/preflight/'+btn.dataset.preflight,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});const d=await r.json();const box=$('#preflightResult');box.innerHTML=`<div class="preflight ${d.ok?'good':'bad'}"><strong>${d.ok?'✓ Configuração pronta':'⚠ Há pendências'}</strong><div class="preflight-grid">${d.checks.map(c=>`<span class="${c.ok?'ok':'fail'}">${c.ok?'✓':'✕'} ${c.name}: ${c.message}</span>`).join('')}</div></div>`;}catch(e){alert(e)}finally{btn.disabled=false;btn.textContent='✓ Testar configuração';}}));
+  $$('.media-hash').forEach(btn=>btn.addEventListener('click',async()=>{const old=btn.textContent;btn.textContent='Calculando...';try{const r=await fetch(`/library/${encodeURIComponent(btn.dataset.kind)}/${encodeURIComponent(btn.dataset.file)}/meta?hash=1`);const d=await r.json();prompt('SHA-256',d.sha256||d.error||'');}finally{btn.textContent=old;}}));
+  async function refreshStatus(){try{const r=await fetch('/api/status',{cache:'no-store'});const d=await r.json();['cpu','ram','disk'].forEach(k=>{const el=$(`[data-metric="${k}"]`);if(el)el.textContent=d[k]+'%';});Object.entries(d.channels||{}).forEach(([cid,s])=>{const badge=$(`[data-status-id="${cid}"]`);if(badge){badge.textContent=s.running?'● AO VIVO':'PARADA';badge.classList.toggle('live',!!s.running);badge.classList.toggle('offline',!s.running);}});}catch(e){}}
+  setInterval(refreshStatus,5000);
+  try{const es=new EventSource('/api/events');es.onmessage=refreshStatus;['live_started','live_stopped','platform_started','platform_reconnecting','schedule_triggered'].forEach(name=>es.addEventListener(name,refreshStatus));}catch(e){}
+  setTimeout(()=>$$('.flash').forEach(x=>x.remove()),7000);
+})();

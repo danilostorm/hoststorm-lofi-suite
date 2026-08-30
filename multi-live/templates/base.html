@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{% block title %}HostStorm Multi Live{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar">
+    <div class="brand"><div class="brand-icon">📺</div><div><strong>HostStorm</strong><small>Multi Live Manager</small></div></div>
+    <nav>
+      <a href="{{ url_for('web.dashboard') }}" class="{% if request.endpoint=='web.dashboard' %}active{% endif %}">▦ <span>Dashboard</span></a>
+      <a href="{{ url_for('web.lives') }}" class="{% if request.endpoint and request.endpoint.startswith('web.live') %}active{% endif %}">● <span>Lives</span></a>
+      <a href="{{ url_for('web.schedules') }}" class="{% if request.endpoint and request.endpoint.startswith('web.schedule') %}active{% endif %}">📅 <span>Agendamentos</span></a>
+      <a href="{{ url_for('web.library') }}" class="{% if request.endpoint and request.endpoint.startswith('web.library') %}active{% endif %}">▤ <span>Biblioteca</span></a>
+      <a href="{{ url_for('web.history') }}" class="{% if request.endpoint=='web.history' %}active{% endif %}">↺ <span>Histórico</span></a>
+      <a href="{{ url_for('web.logs') }}" class="{% if request.endpoint and request.endpoint.startswith('web.log') %}active{% endif %}">⌘ <span>Logs</span></a>
+      <a href="{{ url_for('web.settings') }}" class="{% if request.endpoint and request.endpoint.startswith('web.settings') %}active{% endif %}">⚙ <span>Configurações</span></a>
+    </nav>
+    <div class="sidebar-footer"><span class="dot online"></span> Serviço ativo<small>v{{ app_version }}</small></div>
+  </aside>
+  <main class="main-area">
+    <header class="topbar"><button class="menu-button" id="menuButton">☰</button><div><h1>{% block heading %}HostStorm{% endblock %}</h1><p>{% block subheading %}{% endblock %}</p></div><div class="topbar-clock">🇧🇷 {{ now_br }}</div></header>
+    {% with messages=get_flashed_messages(with_categories=true) %}{% if messages %}<div class="flash-stack">{% for category,msg in messages %}<div class="flash {{ category }}">{{ msg }}</div>{% endfor %}</div>{% endif %}{% endwith %}
+    <section class="content">{% block content %}{% endblock %}</section>
+  </main>
+</div>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body></html>
