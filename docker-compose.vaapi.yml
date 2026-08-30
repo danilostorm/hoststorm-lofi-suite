@@ -1,0 +1,4 @@
+services:
+  multi-live:
+    devices:
+      - /dev/dri:/dev/dri

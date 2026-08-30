@@ -6,7 +6,7 @@ ENV PYTHONUNBUFFERED=1 \
     TZ=America/Sao_Paulo
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg procps ca-certificates tzdata curl \
+    ffmpeg procps ca-certificates tzdata curl fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -28,5 +28,5 @@ COPY VERSION /app/VERSION
 RUN python -m compileall -q /app/app.py /app/hoststorm
 
 EXPOSE 3040
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 CMD curl -fsS http://127.0.0.1:3040/healthz || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD curl -fsS http://127.0.0.1:3040/healthz || exit 1
 CMD ["python", "app.py"]

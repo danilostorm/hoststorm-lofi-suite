@@ -2,7 +2,7 @@ name: HostStorm CI
 
 on:
   push:
-    branches: [main, v2-manager]
+    branches: [main, v2-manager, v3-professional]
   pull_request:
     branches: [main]
 
@@ -32,6 +32,7 @@ jobs:
         env:
           HOSTSTORM_APP_DIR: /tmp/hoststorm-test
           LV2_ADMIN_PASSWORD: test
+          HOSTSTORM_SECRET_KEY: ci-secret-key
           PYTHONPATH: .
         run: python -m pytest -q
 
@@ -43,13 +44,14 @@ jobs:
       - name: Validate compose
         env:
           LV2_ADMIN_PASSWORD: test
+          HOSTSTORM_SECRET_KEY: ci-secret-key
         run: docker compose config >/dev/null
       - name: Build Multi Live image
         run: docker build -t hoststorm-multi-live-ci ./multi-live
       - name: Smoke test health endpoint
         run: |
-          docker run -d --name hoststorm-ci -e LV2_ADMIN_PASSWORD=test -p 3040:3040 hoststorm-multi-live-ci
-          for i in $(seq 1 30); do
+          docker run -d --name hoststorm-ci -e LV2_ADMIN_PASSWORD=test -e HOSTSTORM_SECRET_KEY=ci-secret-key -p 3040:3040 hoststorm-multi-live-ci
+          for i in $(seq 1 40); do
             if curl -fsS http://127.0.0.1:3040/healthz | grep -q '"ok":true'; then
               docker logs hoststorm-ci
               exit 0
