@@ -1,0 +1,54 @@
+name: Bootstrap HostStorm v2
+
+on:
+  push:
+    branches:
+      - v2-manager
+    paths:
+      - '.v2_payload.part8'
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v2-manager
+          fetch-depth: 0
+
+      - name: Rebuild v2 payload
+        run: |
+          cat .v2_payload.part{1..8} > /tmp/hoststorm-v2.b64
+          base64 -d /tmp/hoststorm-v2.b64 > /tmp/hoststorm-v2.tar.xz
+          echo "cdba89166fc874f55905ca138f6c07946b7e219b51382cf10fcae3d097a5ec7d  /tmp/hoststorm-v2.tar.xz" | sha256sum -c -
+          tar -xJf /tmp/hoststorm-v2.tar.xz -C .
+          rm -f multi-live/app.py.gz.b85
+          rm -f multi-live/templates.tar.gz.b85
+          rm -f multi-live/patch_schedule_v3.py
+          rm -f multi-live/patch_schedule_v4.py
+          rm -f multi-live/patch_panel_v6.py
+          rm -f .v2_payload.part{1..8}
+
+      - name: Test v2 source
+        env:
+          HOSTSTORM_APP_DIR: /tmp/hoststorm-test
+          LV2_ADMIN_PASSWORD: test
+          PYTHONPATH: multi-live
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r multi-live/requirements-dev.txt
+          python -m compileall -q multi-live/app.py multi-live/hoststorm
+          cd multi-live
+          PYTHONPATH=. python -m pytest -q
+
+      - name: Commit normal source
+        run: |
+          rm -f .github/workflows/bootstrap-v2.yml
+          git config user.name "HostStorm V2 Bootstrap"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "release: HostStorm Multi Live Manager 2.0" || exit 0
+          git push origin HEAD:v2-manager
