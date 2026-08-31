@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 from types import MethodType
 
-from flask import Blueprint, flash, has_request_context, jsonify, redirect, request, url_for
+from flask import Blueprint, flash, has_request_context, jsonify, redirect, request, session, url_for
 
-from .integrations_v32 import PROVIDER_SPECS, apply_metadata, enabled_integrations, get_integration, provider_specs, save_integration_v32, search_categories
+from .auth import require_role
+from .integrations_v32 import PROVIDER_SPECS, enabled_integrations, get_integration, provider_specs, save_integration_v32
+from .kick_integration_v33 import apply_metadata_v33 as apply_metadata, search_categories_v33 as search_categories
+from .kick_oauth import KICK_SCOPES, authorize_url, discover_account, exchange_code, new_pkce, new_state, normalize_token_payload
 from .utils import now_dt, now_iso
 
 automation_bp = Blueprint('automation', __name__)
@@ -186,6 +190,20 @@ def install_stream_metadata(manager, db_module):
     return manager
 
 
+def _public_base_url():
+    configured = str(os.environ.get('HOSTSTORM_PUBLIC_URL') or '').strip().rstrip('/')
+    if configured:
+        return configured
+    if has_request_context():
+        return request.url_root.rstrip('/')
+    return ''
+
+
+def _kick_callback_url():
+    base = _public_base_url()
+    return base + '/api/kick/oauth/callback' if base else '/api/kick/oauth/callback'
+
+
 def install_broadcast_automation(app, db_module, web_module, scheduler_module, manager):
     global DB, MANAGER
     DB = db_module
@@ -198,24 +216,102 @@ def install_broadcast_automation(app, db_module, web_module, scheduler_module, m
         return {
             'integration_accounts': enabled_integrations(),
             'integration_provider_specs': provider_specs(),
+            'kick_callback_url': _kick_callback_url(),
+            'kick_public_url_configured': bool(str(os.environ.get('HOSTSTORM_PUBLIC_URL') or '').strip()),
+            'kick_required_scopes': ' '.join(KICK_SCOPES),
         }
 
 
 @automation_bp.route('/integrations/save-v32', methods=['POST'])
+@require_role('admin')
 def integration_save():
     provider = request.form.get('provider', 'twitch')
     name = request.form.get('name', '').strip() or PROVIDER_SPECS.get(provider, {}).get('label', provider)
+    iid = request.form.get('id', '').strip() or None
     keys = [
         'client_id', 'client_secret', 'access_token', 'refresh_token', 'channel_login', 'broadcaster_id',
         'channel_slug', 'channel_id', 'api_key', 'broadcast_id', 'endpoint_url', 'bearer_token',
+        'kick_user_id', 'broadcaster_user_id', 'token_scope', 'token_expires_at', 'oauth_connected',
     ]
     config = {k: request.form.get(k, '').strip() for k in keys}
     try:
-        save_integration_v32(provider, name, config, request.form.get('enabled') == 'on')
+        iid = save_integration_v32(provider, name, config, request.form.get('enabled') == 'on', iid)
+        if provider == 'kick' and request.form.get('oauth_connect') == '1':
+            return redirect(url_for('automation.kick_oauth_start', iid=iid))
         flash('Integração salva. Use “Testar API” para validar token e permissões.', 'success')
     except Exception as e:
         flash(str(e), 'error')
     return redirect(url_for('pro.integrations'))
+
+
+@automation_bp.route('/professional/integrations/<iid>/kick/connect')
+@require_role('admin')
+def kick_oauth_start(iid):
+    item = get_integration(iid)
+    if not item or item.get('provider') != 'kick':
+        flash('Integração Kick não encontrada.', 'error')
+        return redirect(url_for('pro.integrations'))
+    config = item.get('config') or {}
+    client_id = str(config.get('client_id') or '').strip()
+    client_secret = str(config.get('client_secret') or '').strip()
+    if not client_id or not client_secret:
+        flash('Informe Client ID e Client Secret da aplicação Kick antes de conectar.', 'error')
+        return redirect(url_for('pro.integrations', edit=iid))
+    redirect_uri = _kick_callback_url()
+    if not redirect_uri.startswith(('http://', 'https://')):
+        flash('Configure HOSTSTORM_PUBLIC_URL com o domínio público HTTPS do painel para usar OAuth da Kick.', 'error')
+        return redirect(url_for('pro.integrations', edit=iid))
+    verifier, challenge = new_pkce()
+    state = new_state()
+    session['kick_oauth_pending'] = {
+        'iid': iid,
+        'state': state,
+        'verifier': verifier,
+        'redirect_uri': redirect_uri,
+    }
+    return redirect(authorize_url(client_id, redirect_uri, state, challenge, KICK_SCOPES))
+
+
+@automation_bp.route('/api/kick/oauth/callback')
+def kick_oauth_callback():
+    pending = session.pop('kick_oauth_pending', None) or {}
+    state = str(request.args.get('state') or '')
+    code = str(request.args.get('code') or '')
+    error = str(request.args.get('error') or '')
+    if error:
+        flash('Kick recusou a autorização: ' + error, 'error')
+        return redirect(url_for('pro.integrations'))
+    if not pending or not state or state != str(pending.get('state') or ''):
+        flash('Kick OAuth: state inválido ou sessão expirada. Tente conectar novamente.', 'error')
+        return redirect(url_for('pro.integrations'))
+    if not code:
+        flash('Kick OAuth não retornou o código de autorização.', 'error')
+        return redirect(url_for('pro.integrations'))
+    iid = str(pending.get('iid') or '')
+    item = get_integration(iid)
+    if not item or item.get('provider') != 'kick':
+        flash('Integração Kick não encontrada após o retorno do OAuth.', 'error')
+        return redirect(url_for('pro.integrations'))
+    config = dict(item.get('config') or {})
+    try:
+        tokens = exchange_code(
+            str(config.get('client_id') or ''),
+            str(config.get('client_secret') or ''),
+            str(pending.get('redirect_uri') or ''),
+            code,
+            str(pending.get('verifier') or ''),
+        )
+        token_data = normalize_token_payload(tokens, str(config.get('refresh_token') or ''))
+        if not token_data.get('access_token'):
+            raise RuntimeError('Kick OAuth não retornou access_token.')
+        config.update(token_data)
+        config.update(discover_account(token_data['access_token']))
+        config['oauth_connected'] = '1'
+        save_integration_v32('kick', item.get('name') or config.get('channel_slug') or 'Kick', config, bool(item.get('enabled')), iid)
+        flash('Kick conectado por OAuth oficial. Access token e refresh token foram salvos criptografados.', 'success')
+    except Exception as e:
+        flash('Falha no OAuth da Kick: ' + str(e), 'error')
+    return redirect(url_for('pro.integrations', edit=iid))
 
 
 @automation_bp.route('/api/integrations/<iid>/categories')
