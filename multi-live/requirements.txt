@@ -6,3 +6,4 @@ yt-dlp[default]==2026.8.19
 cryptography==45.0.6
 qrcode[pil]==8.2
 pywebpush>=2.0.0,<3.0
+webauthn==3.0.0
