@@ -1,9 +1,10 @@
 {% extends 'base.html' %}
 {% block title %}{% if schedule %}Editar agenda{% else %}Nova agenda{% endif %} • HostStorm{% endblock %}
 {% block heading %}{% if schedule %}Editar agendamento{% else %}Novo agendamento{% endif %}{% endblock %}
-{% block subheading %}Escolha horário, fonte, plataformas e a regra de encerramento da transmissão.{% endblock %}
+{% block subheading %}Escolha horário, fonte, plataformas e automações que serão aplicadas antes da transmissão.{% endblock %}
 {% block content %}
 {% set source_mode = schedule.source_mode if schedule and schedule.source_mode else 'library' %}
+{% set selected_meta = schedule.metadata_integrations if schedule and schedule.metadata_integrations else [] %}
 <form class="form-layout" action="{{ url_for('urlmedia.schedule_save') }}" method="post" id="scheduleForm">
   {% if schedule %}<input type="hidden" name="id" value="{{ schedule.id }}">{% endif %}
 
@@ -42,9 +43,7 @@
       <input type="hidden" name="source_extractor" id="sourceExtractor" value="{{ schedule.source_extractor if schedule and source_mode=='url' else '' }}">
       <input type="hidden" name="source_preview_url" id="sourcePreviewUrl" value="{{ schedule.source_preview_url if schedule and source_mode=='url' else '' }}">
       <div class="url-analysis {% if schedule and source_mode=='url' and schedule.source_url %}ready{% endif %}" id="urlAnalysis">
-        <div class="url-preview" id="urlPreview">
-          {% if schedule and source_mode=='url' and schedule.source_preview_url %}<iframe src="{{ schedule.source_preview_url }}" title="Preview" loading="lazy" allow="encrypted-media; picture-in-picture" allowfullscreen></iframe>{% else %}<div class="preview-placeholder">Cole a URL e clique em <b>Analisar URL</b>.</div>{% endif %}
-        </div>
+        <div class="url-preview" id="urlPreview">{% if schedule and source_mode=='url' and schedule.source_preview_url %}<iframe src="{{ schedule.source_preview_url }}" title="Preview" loading="lazy" allow="encrypted-media; picture-in-picture" allowfullscreen></iframe>{% else %}<div class="preview-placeholder">Cole a URL e clique em <b>Analisar URL</b>.</div>{% endif %}</div>
         <div class="url-analysis-info"><span class="eyebrow">FONTE REMOTA</span><h3 id="urlSourceTitle">{{ schedule.source_title if schedule and source_mode=='url' and schedule.source_title else 'Ainda não analisada' }}</h3><div class="url-meta"><span id="urlDurationLabel">{% if schedule and source_mode=='url' and schedule.source_duration_seconds %}⏱ {{ schedule.source_duration_seconds|duration_hms }}{% else %}⏱ duração pendente{% endif %}</span><span id="urlExtractorLabel">{{ schedule.source_extractor if schedule and source_mode=='url' and schedule.source_extractor else 'yt-dlp / ffprobe' }}</span></div><p>O embed é apenas para preview. Na live o HostStorm resolve a mídia com <strong>yt-dlp</strong> e retransmite pelo <strong>FFmpeg</strong>.</p></div>
       </div>
     </div>
@@ -56,14 +55,63 @@
   </section>
 
   <section class="panel">
-    <div class="panel-head"><div><h2>Plataformas</h2><p>Essa seleção vale somente para esta agenda.</p></div></div>
+    <div class="panel-head"><div><h2>Plataformas de transmissão</h2><p>Essa seleção vale somente para esta agenda.</p></div></div>
     {% set ch=channels.get(selected_channel) %}<div class="platform-picker">{% for slug,d in (ch.destinations if ch else {}).items() %}<label><input type="checkbox" name="platforms" value="{{ slug }}" {% if schedule and slug in schedule.platforms %}checked{% elif not schedule and d.enabled %}checked{% endif %}><span>{{ d.label }}</span></label>{% endfor %}</div>
     <label>Se o canal já estiver ao vivo<select name="conflict_policy"><option value="skip" {% if not schedule or schedule.conflict_policy=='skip' %}selected{% endif %}>Pular esta agenda</option><option value="stop_current" {% if schedule and schedule.conflict_policy=='stop_current' %}selected{% endif %}>Encerrar a atual e iniciar esta</option><option value="wait" {% if schedule and schedule.conflict_policy=='wait' %}selected{% endif %}>Aguardar a live atual terminar</option></select></label>
   </section>
 
-  {% if schedule %}<section class="panel"><div class="panel-head"><div><h2>Última execução</h2></div></div><div class="detail-list"><div><span>Status</span><strong>{{ schedule.last_status or '-' }}</strong></div><div><span>Início</span><strong>{{ schedule.last_started_at|datetime_br }}</strong></div><div><span>Fim</span><strong>{{ schedule.last_finished_at|datetime_br }}</strong></div>{% if source_mode=='url' %}<div><span>Fonte</span><strong>{{ schedule.source_title or schedule.source_url }}</strong></div>{% endif %}</div></section>{% endif %}
+  <section class="panel broadcast-metadata-panel">
+    <div class="panel-head"><div><h2>Automação da plataforma</h2><p>Opcional. Atualiza as contas conectadas antes do FFmpeg começar a transmitir.</p></div><span class="status-pill">AUTO</span></div>
+    <label class="check-row"><input type="checkbox" name="metadata_enabled" id="metadataEnabled" {% if schedule and schedule.metadata_enabled %}checked{% endif %}> Atualizar título/categoria automaticamente</label>
+
+    <div class="metadata-account-picker">
+      {% for account in integration_accounts %}
+        {% set spec=integration_provider_specs.get(account.provider,{}) %}
+        <label><input type="checkbox" name="metadata_integrations" value="{{account.id}}" {% if account.id in selected_meta %}checked{% endif %}><span><strong>{{spec.get('label',account.provider)}} · {{account.name}}</strong><small>{% for cap in spec.get('capabilities',[]) %}{{ {'title':'título','category':'categoria','description':'descrição'}.get(cap,cap) }}{% if not loop.last %} • {% endif %}{% endfor %}</small></span></label>
+      {% else %}
+        <div class="empty-state compact">Nenhuma conta ativa. Cadastre em <a href="{{url_for('pro.integrations')}}"><strong>Integrações</strong></a>.</div>
+      {% endfor %}
+    </div>
+
+    <label>Título da live <small>(opcional)</small><input name="broadcast_title" value="{{schedule.broadcast_title if schedule else ''}}" placeholder="Ex.: 🔴 AO VIVO | {source}"></label>
+    <p class="field-note token-note">Variáveis disponíveis: <code>{source}</code> <code>{channel}</code> <code>{date}</code> <code>{time}</code>. Campo vazio = não alterar título.</p>
+
+    <div class="category-row">
+      <label>Categoria / jogo <small>(opcional)</small><input name="broadcast_category" id="broadcastCategory" value="{{schedule.broadcast_category if schedule else ''}}" placeholder="Ex.: Just Chatting, Minecraft, Gaming"></label>
+      <button class="btn ghost category-search-button" type="button" id="categorySearch">Buscar na conta</button>
+    </div>
+    <div class="category-suggestions" id="categorySuggestions"></div>
+
+    <label>Descrição <small>(opcional; atualmente aplicada onde a API oferece suporte)</small><textarea name="broadcast_description" rows="4" placeholder="Descrição da live...">{{schedule.broadcast_description if schedule else ''}}</textarea></label>
+    <label>Se a API da plataforma falhar<select name="metadata_failure_policy"><option value="continue" {% if not schedule or schedule.metadata_failure_policy!='block' %}selected{% endif %}>Avisar no log e iniciar a live mesmo assim</option><option value="block" {% if schedule and schedule.metadata_failure_policy=='block' %}selected{% endif %}>Não iniciar a live até corrigir a integração</option></select></label>
+    <div class="automation-note">O HostStorm só altera os campos preenchidos. Integrações cuja plataforma não foi selecionada nesta agenda são ignoradas automaticamente.</div>
+  </section>
+
+  {% if schedule %}<section class="panel"><div class="panel-head"><div><h2>Última execução</h2></div></div><div class="detail-list"><div><span>Status</span><strong>{{ schedule.last_status or '-' }}</strong></div><div><span>Início</span><strong>{{ schedule.last_started_at|datetime_br }}</strong></div><div><span>Fim</span><strong>{{ schedule.last_finished_at|datetime_br }}</strong></div>{% if source_mode=='url' %}<div><span>Fonte</span><strong>{{ schedule.source_title or schedule.source_url }}</strong></div>{% endif %}{% if schedule.metadata_last_report %}<div><span>Automação</span><strong>{% for r in schedule.metadata_last_report %}{{r.integration_name or r.provider or 'Conta'}}: {{r.message}}{% if not loop.last %} • {% endif %}{% endfor %}</strong></div>{% endif %}</div></section>{% endif %}
 
   <div class="sticky-save"><button class="btn primary">Salvar agenda</button><button class="btn ghost" name="run_preflight" value="1">Salvar + pré-teste</button>{% if schedule %}<button class="btn success" type="submit" formaction="{{ url_for('web.schedule_run_now',sid=schedule.id) }}" formmethod="post">▶ Executar agora</button>{% endif %}</div>
 </form>
 {% if schedule %}<div class="page-actions"><form action="{{ url_for('web.schedule_toggle',sid=schedule.id) }}" method="post"><button class="btn ghost">{% if schedule.enabled %}Pausar{% else %}Ativar{% endif %}</button></form><form action="{{ url_for('web.schedule_delete',sid=schedule.id) }}" method="post" onsubmit="return confirm('Excluir este agendamento?')"><button class="btn danger">Excluir agenda</button></form></div>{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+(()=>{
+ const search=document.getElementById('categorySearch'), input=document.getElementById('broadcastCategory'), out=document.getElementById('categorySuggestions');
+ if(!search) return;
+ search.addEventListener('click',async()=>{
+   const account=document.querySelector('input[name="metadata_integrations"]:checked');
+   if(!account){out.innerHTML='<span class="field-note">Selecione primeiro uma conta conectada.</span>';return;}
+   if(!input.value.trim()){out.innerHTML='<span class="field-note">Digite uma categoria ou jogo para pesquisar.</span>';return;}
+   search.disabled=true; search.textContent='Buscando...'; out.innerHTML='';
+   try{
+     const r=await fetch(`/api/integrations/${encodeURIComponent(account.value)}/categories?q=${encodeURIComponent(input.value)}`);
+     const j=await r.json();
+     if(!r.ok||!j.ok) throw new Error(j.error||'Falha na busca');
+     out.innerHTML=(j.items||[]).slice(0,8).map(x=>`<button type="button" class="category-chip" data-name="${String(x.name).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')}">${String(x.name).replace(/&/g,'&amp;').replace(/</g,'&lt;')}</button>`).join('')||'<span class="field-note">Nenhuma categoria encontrada.</span>';
+     out.querySelectorAll('.category-chip').forEach(b=>b.onclick=()=>{input.value=b.dataset.name;out.innerHTML='';});
+   }catch(e){out.innerHTML=`<span class="field-note error-text">${e.message}</span>`}
+   finally{search.disabled=false;search.textContent='Buscar na conta';}
+ });
+})();
+</script>
 {% endblock %}
