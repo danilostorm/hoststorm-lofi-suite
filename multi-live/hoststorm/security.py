@@ -35,23 +35,8 @@ def _database_has_v3_encrypted_secrets() -> bool:
         return False
 
 
-def _persistent_secret() -> str:
-    if KEY_PATH.exists():
-        try:
-            value = KEY_PATH.read_text(encoding='utf-8').strip()
-            if value:
-                return value
-        except Exception:
-            pass
-
-    # Compatibilidade com RCs anteriores: se já houver dados enc:v1 e nenhuma chave
-    # persistente, mantenha a senha administrativa como material antigo.
-    legacy_admin = os.environ.get('LV2_ADMIN_PASSWORD', '').strip()
-    if legacy_admin and _database_has_v3_encrypted_secrets():
-        return legacy_admin
-
+def _store_persistent_secret(value: str) -> str:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    value = secrets.token_urlsafe(48)
     tmp = KEY_PATH.with_suffix('.tmp')
     try:
         tmp.write_text(value, encoding='utf-8')
@@ -66,7 +51,27 @@ def _persistent_secret() -> str:
             tmp.unlink(missing_ok=True)
         except Exception:
             pass
-        return legacy_admin or 'hoststorm-dev-key'
+        return value
+
+
+def _persistent_secret() -> str:
+    if KEY_PATH.exists():
+        try:
+            value = KEY_PATH.read_text(encoding='utf-8').strip()
+            if value:
+                return value
+        except Exception:
+            pass
+
+    # Compatibilidade com RCs anteriores: se já houver dados enc:v1 e nenhuma chave
+    # persistente, a senha administrativa era o material criptográfico antigo.
+    # Persistimos esse material uma única vez para que futuras trocas de senha não
+    # tornem stream keys/TOTP/credenciais ilegíveis.
+    legacy_admin = os.environ.get('LV2_ADMIN_PASSWORD', '').strip()
+    if legacy_admin and _database_has_v3_encrypted_secrets():
+        return _store_persistent_secret(legacy_admin)
+
+    return _store_persistent_secret(secrets.token_urlsafe(48))
 
 
 def _key_material() -> bytes:

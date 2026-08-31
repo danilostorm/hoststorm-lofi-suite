@@ -2,7 +2,7 @@ name: HostStorm CI
 
 on:
   push:
-    branches: [main, v2-manager, v3-professional]
+    branches: [main, beta, v2-manager, v3-professional]
   pull_request:
     branches: [main]
 
@@ -35,6 +35,12 @@ jobs:
           HOSTSTORM_SECRET_KEY: ci-secret-key
           PYTHONPATH: .
         run: python -m pytest -q
+      - name: Validate host scripts
+        working-directory: .
+        run: |
+          bash -n scripts/update.sh
+          bash -n scripts/rollback.sh
+          bash -n scripts/host-update-agent.sh
 
   docker:
     runs-on: ubuntu-latest
