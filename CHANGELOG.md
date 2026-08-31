@@ -1,3 +1,29 @@
+# 3.2.0
+
+HostStorm Multi Live Manager 3.2 — Account & Broadcast Automation.
+
+## Novo
+- Passkeys/WebAuthn como login sem senha, compatível com Windows Hello, Android, iPhone/Face ID/Touch ID e chaves FIDO2;
+- TOTP continua disponível e pode coexistir com Passkeys;
+- Integrações expandidas para Twitch, YouTube, Kick e Webhook/API externa;
+- painel de integrações mostra capacidades por conta e mantém tokens criptografados no SQLite;
+- agendamentos podem selecionar uma ou mais contas conectadas para automação de metadados;
+- título, categoria/jogo e descrição são opcionais: campos vazios não alteram o valor da plataforma;
+- variáveis de título/descrição `{source}`, `{channel}`, `{date}` e `{time}`;
+- busca de categoria na API da primeira conta selecionada;
+- atualização de metadados acontece antes do início do FFmpeg, inclusive quando a live será delegada a outro nó;
+- Twitch: título e categoria/jogo via Helix `Modify Channel Information`;
+- YouTube: título, descrição e categoria do broadcast ativo/próximo;
+- Kick: título e categoria pelo Public API, usando token OAuth com `channel:write`;
+- política por agenda para continuar a live caso a API falhe ou bloquear o início até corrigir a integração;
+- relatório da última automação fica visível dentro do agendamento.
+
+## Segurança / compatibilidade
+- Passkeys exigem contexto seguro HTTPS; `HOSTSTORM_PUBLIC_URL` pode fixar a URL pública atrás do proxy reverso;
+- credenciais WebAuthn são armazenadas por usuário no SQLite; a chave privada do autenticador nunca é enviada ao HostStorm;
+- migração adiciona os campos da automação aos agendamentos existentes sem recriar o banco;
+- agendas antigas continuam funcionando sem automação até que ela seja explicitamente ativada.
+
 # 3.1.0
 
 HostStorm Multi Live Manager 3.1 — fontes remotas e acabamento da Biblioteca.
