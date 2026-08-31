@@ -30,6 +30,12 @@ def create_app():
     from .distributed import install_distributed
     install_distributed(streaming_module.MANAGER)
 
+    # Compatibilidade do módulo web profissional: list_backups pertence a professional.py.
+    # Expondo no namespace de pro_db preservamos a API importada pelo RC1 sem duplicar lógica.
+    from . import pro_db as pro_db_module
+    from .professional import list_backups as professional_list_backups
+    pro_db_module.list_backups = professional_list_backups
+
     # A autenticação Basic da v2 é substituída pela autenticação profissional da v3.
     legacy_web.ADMIN_PASSWORD=''
     from .auth import auth_bp
