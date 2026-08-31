@@ -3,13 +3,19 @@
 {% block heading %}Integrações oficiais{% endblock %}
 {% block subheading %}Conecte contas para validar o estado real e automatizar título, categoria e descrição nas lives agendadas.{% endblock %}
 {% block content %}
+{% set ns=namespace(editing=None) %}
+{% set edit_id=request.args.get('edit','') %}
+{% for row in integrations %}{% if row.id==edit_id %}{% set ns.editing=row %}{% endif %}{% endfor %}
+{% set editing=ns.editing %}
+{% set current_provider=editing.provider if editing else 'twitch' %}
+{% set cfg=editing.config if editing else {} %}
 <div class="integration-layout">
   <section class="panel integration-list-panel">
     <div class="panel-head"><div><h2>Contas conectadas</h2><p>Tokens e credenciais ficam criptografados no SQLite. As contas ativas aparecem automaticamente no agendamento.</p></div></div>
     <div class="integration-grid">
       {% for i in integrations %}
         {% set spec=integration_provider_specs.get(i.provider,{}) %}
-        <article class="integration-card">
+        <article class="integration-card {% if edit_id==i.id %}selected-card{% endif %}">
           <div class="integration-card-head"><div><span class="status-pill {{'running' if i.enabled else 'offline'}}">{{spec.get('label',i.provider|upper)}}</span><h3>{{i.name}}</h3></div><span class="integration-state">{{'ATIVA' if i.enabled else 'PAUSADA'}}</span></div>
           <div class="capability-line">{% for cap in spec.get('capabilities',[]) %}<span class="platform-chip">{{ {'title':'Título','category':'Categoria','description':'Descrição'}.get(cap,cap) }}</span>{% endfor %}</div>
           <div class="integration-identity">
@@ -17,10 +23,16 @@
             {% if i.config.channel_slug %}<span>Canal: <strong>{{i.config.channel_slug}}</strong></span>{% endif %}
             {% if i.config.channel_id %}<span>Channel ID: <strong>{{i.config.channel_id}}</strong></span>{% endif %}
             {% if i.config.broadcast_id %}<span>Broadcast: <strong>{{i.config.broadcast_id}}</strong></span>{% endif %}
+            {% if i.provider=='kick' %}<span>Autenticação: <strong>{{'OAuth oficial + refresh' if i.config.oauth_connected else 'Token manual / pendente de OAuth'}}</strong></span>{% endif %}
             {% if i.provider=='webhook' and i.config.endpoint_url %}<span>Endpoint: <strong>{{i.config.endpoint_url}}</strong></span>{% endif %}
           </div>
           <p class="field-note">{{spec.get('hint','')}}</p>
-          <div class="card-actions"><form method="post" action="{{url_for('pro.integration_check',iid=i.id)}}"><button class="btn ghost">Testar API</button></form><form method="post" action="{{url_for('pro.integration_delete',iid=i.id)}}" onsubmit="return confirm('Remover integração?')"><button class="btn danger">Remover</button></form></div>
+          <div class="card-actions">
+            <a class="btn ghost" href="{{url_for('pro.integrations',edit=i.id)}}">Editar</a>
+            {% if i.provider=='kick' %}<a class="btn primary" href="{{url_for('automation.kick_oauth_start',iid=i.id)}}">{{'Reautorizar Kick' if i.config.oauth_connected else 'Conectar com Kick'}}</a>{% endif %}
+            <form method="post" action="{{url_for('pro.integration_check',iid=i.id)}}"><button class="btn ghost">Testar API</button></form>
+            <form method="post" action="{{url_for('pro.integration_delete',iid=i.id)}}" onsubmit="return confirm('Remover integração?')"><button class="btn danger">Remover</button></form>
+          </div>
         </article>
       {% else %}
         <div class="empty-state">Nenhuma integração cadastrada.</div>
@@ -29,42 +41,63 @@
   </section>
 
   <section class="panel integration-add-panel">
-    <div class="panel-head"><div><h2>Adicionar integração</h2><p>Use tokens OAuth com as permissões indicadas abaixo.</p></div></div>
+    <div class="panel-head"><div><h2>{{'Editar integração' if editing else 'Adicionar integração'}}</h2><p>{% if editing %}Altere os dados ou reautorize a conta sem apagar a integração.{% else %}Prefira OAuth oficial quando a plataforma oferecer suporte.{% endif %}</p></div>{% if editing %}<a class="btn ghost small" href="{{url_for('pro.integrations')}}">Cancelar</a>{% endif %}</div>
     <form method="post" action="{{url_for('automation.integration_save')}}" id="integrationForm">
-      <label>Plataforma<select name="provider" id="provider">{% for key,spec in integration_provider_specs.items() %}<option value="{{key}}">{{spec.label}}</option>{% endfor %}</select></label>
-      <label>Nome da conexão<input name="name" required placeholder="Ex.: Canal principal"></label>
+      {% if editing %}<input type="hidden" name="id" value="{{editing.id}}">{% endif %}
+      <label>Plataforma
+        <select name="provider" id="provider" {% if editing %}disabled{% endif %}>{% for key,spec in integration_provider_specs.items() %}<option value="{{key}}" {% if current_provider==key %}selected{% endif %}>{{spec.label}}</option>{% endfor %}</select>
+        {% if editing %}<input type="hidden" name="provider" value="{{current_provider}}">{% endif %}
+      </label>
+      <label>Nome da conexão<input name="name" required value="{{editing.name if editing else ''}}" placeholder="Ex.: Canal principal"></label>
 
-      <div class="provider-box" data-provider="twitch">
+      <div class="provider-box" data-provider="twitch" {% if current_provider!='twitch' %}hidden{% endif %}>
         <div class="provider-note"><strong>Twitch</strong><span>Escopo necessário: <code>channel:manage:broadcast</code></span></div>
-        <label>Client ID<input name="client_id" autocomplete="off"></label>
-        <label>OAuth Access Token<input type="password" name="access_token" autocomplete="new-password"></label>
-        <label>Channel login<input name="channel_login" placeholder="seucanal"></label>
-        <label>Broadcaster ID <small>(opcional)</small><input name="broadcaster_id" placeholder="detectado pelo login se vazio"></label>
+        <label>Client ID<input name="client_id" value="{{cfg.get('client_id','')}}" autocomplete="off"></label>
+        <label>OAuth Access Token<input type="password" name="access_token" value="{{cfg.get('access_token','')}}" autocomplete="new-password"></label>
+        <label>Channel login<input name="channel_login" value="{{cfg.get('channel_login','')}}" placeholder="seucanal"></label>
+        <label>Broadcaster ID <small>(opcional)</small><input name="broadcaster_id" value="{{cfg.get('broadcaster_id','')}}" placeholder="detectado pelo login se vazio"></label>
       </div>
 
-      <div class="provider-box" data-provider="youtube" hidden>
+      <div class="provider-box" data-provider="youtube" {% if current_provider!='youtube' %}hidden{% endif %}>
         <div class="provider-note"><strong>YouTube</strong><span>Para escrever metadados use OAuth com <code>youtube.force-ssl</code>.</span></div>
-        <label>OAuth Access Token<input type="password" name="access_token" autocomplete="new-password"></label>
-        <label>Channel ID <small>(opcional para conferência)</small><input name="channel_id"></label>
-        <label>API key <small>(opcional; ajuda nas consultas públicas)</small><input type="password" name="api_key"></label>
-        <label>Broadcast ID <small>(opcional)</small><input name="broadcast_id" placeholder="vazio = localizar live ativa/próxima"></label>
+        <label>OAuth Access Token<input type="password" name="access_token" value="{{cfg.get('access_token','')}}" autocomplete="new-password"></label>
+        <label>Channel ID <small>(opcional para conferência)</small><input name="channel_id" value="{{cfg.get('channel_id','')}}"></label>
+        <label>API key <small>(opcional; ajuda nas consultas públicas)</small><input type="password" name="api_key" value="{{cfg.get('api_key','')}}"></label>
+        <label>Broadcast ID <small>(opcional)</small><input name="broadcast_id" value="{{cfg.get('broadcast_id','')}}" placeholder="vazio = localizar live ativa/próxima"></label>
       </div>
 
-      <div class="provider-box" data-provider="kick" hidden>
-        <div class="provider-note"><strong>Kick</strong><span>Use OAuth com <code>channel:read channel:write</code>.</span></div>
-        <label>OAuth Access Token<input type="password" name="access_token" autocomplete="new-password"></label>
-        <label>Channel slug<input name="channel_slug" placeholder="seucanal"></label>
+      <div class="provider-box" data-provider="kick" {% if current_provider!='kick' %}hidden{% endif %}>
+        <div class="provider-note oauth-note"><strong>Kick • OAuth oficial</strong><span>O HostStorm usa Authorization Code + PKCE e renova o token automaticamente.</span></div>
+        <div class="oauth-status-row"><span class="status-pill {{'running' if cfg.get('oauth_connected') else 'offline'}}">{{'CONECTADA' if cfg.get('oauth_connected') else 'NÃO AUTORIZADA'}}</span><span>Escopos: <code>{{kick_required_scopes}}</code></span></div>
+        <label>Client ID da aplicação Kick<input name="client_id" value="{{cfg.get('client_id','')}}" autocomplete="off"></label>
+        <label>Client Secret da aplicação Kick<input type="password" name="client_secret" value="{{cfg.get('client_secret','')}}" autocomplete="new-password" placeholder="fica criptografado"></label>
+        <label>Redirect URI do HostStorm<div class="input-action-row"><input value="{{kick_callback_url}}" readonly id="kickCallbackUrl"><button type="button" class="btn ghost" data-copy-target="#kickCallbackUrl">Copiar</button></div></label>
+        {% if not kick_public_url_configured %}<p class="field-note warning-text">Recomendado: configure <code>HOSTSTORM_PUBLIC_URL=https://seu-dominio</code> para garantir que o callback OAuth seja sempre o mesmo atrás do proxy.</p>{% endif %}
+        <p class="field-note">Na aplicação Kick existente, cadastre exatamente o Redirect URI acima e habilite <strong>Atualizar informações do canal</strong> (<code>channel:write</code>). Uma única aplicação Kick pode autorizar várias contas; não é necessário criar um app novo para cada canal.</p>
+        <label>Channel slug <small>(opcional; detectado após OAuth)</small><input name="channel_slug" value="{{cfg.get('channel_slug','')}}" placeholder="seucanal"></label>
+        <details class="advanced-box"><summary>Modo avançado / token manual</summary><p class="field-note">Compatibilidade para tokens existentes. O OAuth oficial acima é o método recomendado.</p><label>OAuth Access Token<input type="password" name="access_token" value="{{cfg.get('access_token','')}}" autocomplete="new-password"></label><label>Refresh Token<input type="password" name="refresh_token" value="{{cfg.get('refresh_token','')}}" autocomplete="new-password"></label></details>
+        <button class="btn primary full oauth-connect-button" type="submit" name="oauth_connect" value="1">{{'Salvar e reautorizar com Kick' if cfg.get('oauth_connected') else 'Salvar e conectar com Kick'}}</button>
       </div>
 
-      <div class="provider-box" data-provider="webhook" hidden>
+      <div class="provider-box" data-provider="webhook" {% if current_provider!='webhook' %}hidden{% endif %}>
         <div class="provider-note"><strong>Webhook / API externa</strong><span>Recebe JSON com título, categoria, descrição, canal e agenda.</span></div>
-        <label>Endpoint URL<input type="url" name="endpoint_url" placeholder="https://automacao.exemplo/hoststorm"></label>
-        <label>Bearer token <small>(opcional)</small><input type="password" name="bearer_token"></label>
+        <label>Endpoint URL<input type="url" name="endpoint_url" value="{{cfg.get('endpoint_url','')}}" placeholder="https://automacao.exemplo/hoststorm"></label>
+        <label>Bearer token <small>(opcional)</small><input type="password" name="bearer_token" value="{{cfg.get('bearer_token','')}}"></label>
       </div>
 
-      <label class="check-row"><input type="checkbox" name="enabled" checked> Integração ativa</label>
-      <button class="btn primary full">Salvar integração</button>
+      <label class="check-row"><input type="checkbox" name="enabled" {% if not editing or editing.enabled %}checked{% endif %}> Integração ativa</label>
+      <button class="btn primary full">{{'Salvar alterações' if editing else 'Salvar integração'}}</button>
     </form>
   </section>
 </div>
+{% endblock %}
+{% block scripts %}
+<script>
+(()=>{
+ const provider=document.getElementById('provider'), boxes=[...document.querySelectorAll('.provider-box')];
+ const refresh=()=>{const value=provider?.value||'{{current_provider}}';boxes.forEach(box=>{const active=box.dataset.provider===value;box.hidden=!active;box.querySelectorAll('input,select,textarea,button').forEach(el=>{if(el.name && el.name!=='oauth_connect')el.disabled=!active;});});};
+ provider?.addEventListener('change',refresh);refresh();
+ document.querySelectorAll('[data-copy-target]').forEach(btn=>btn.addEventListener('click',async()=>{const el=document.querySelector(btn.dataset.copyTarget);if(!el)return;try{await navigator.clipboard.writeText(el.value);const old=btn.textContent;btn.textContent='Copiado';setTimeout(()=>btn.textContent=old,1200);}catch(_){el.select();document.execCommand('copy');}}));
+})();
+</script>
 {% endblock %}
