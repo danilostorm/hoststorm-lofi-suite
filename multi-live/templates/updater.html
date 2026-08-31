@@ -1,2 +1,65 @@
-{% extends 'base.html' %}{% block title %}Atualizações • HostStorm{% endblock %}{% block heading %}Atualizações & Canais{% endblock %}{% block subheading %}Visibilidade da versão instalada e política Stable/Beta com rollback pelo host.{% endblock %}{% block content %}<div class="dashboard-grid"><section class="panel"><div class="hero-status good"><strong>v{{version}}</strong><p>Versão instalada</p></div><div class="detail-list"><div><span>Canal</span><strong>{{channel|upper}}</strong></div><div><span>Git SHA</span><strong>{{git_sha or 'não informado'}}</strong></div><div><span>Estratégia</span><strong>Health check + rollback</strong></div></div></section><section class="panel span-2"><div class="panel-head"><div><h2>Atualização segura</h2><p>{{note}}</p></div></div><div class="step-grid"><div><b>1</b><strong>Snapshot</strong><span>SQLite consistente</span></div><div><b>2</b><strong>Imagem rollback</strong><span>versão atual preservada</span></div><div><b>3</b><strong>Build</strong><span>nova imagem isolada</span></div><div><b>4</b><strong>Health</strong><span>/healthz obrigatório</span></div></div><pre class="mini-log">cd /mnt/user/appdata/hoststorm-lofi-suite
-bash scripts/update.sh</pre><p class="muted">A aplicação não executa <code>git pull</code> de dentro do próprio container para evitar perder o controlador durante uma atualização. O host continua sendo a autoridade de deploy.</p></section></div>{% endblock %}
+{% extends 'base.html' %}
+{% block title %}Atualizações • HostStorm{% endblock %}
+{% block heading %}Atualizações & Canais{% endblock %}
+{% block subheading %}Stable/Beta com snapshot, health check e rollback automático pelo agente do host.{% endblock %}
+{% block content %}
+<div class="dashboard-grid">
+  <section class="panel">
+    <div class="hero-status good"><strong>v{{version}}</strong><p>Versão instalada</p></div>
+    <div class="detail-list">
+      <div><span>Canal configurado</span><strong>{{channel|upper}}</strong></div>
+      <div><span>Git SHA</span><strong>{{git_sha or 'não informado'}}</strong></div>
+      <div><span>Estratégia</span><strong>Snapshot + Health + Rollback</strong></div>
+    </div>
+  </section>
+
+  <section class="panel span-2">
+    <div class="panel-head">
+      <div>
+        <h2>Atualização segura</h2>
+        <p>O painel apenas solicita a atualização; o agente do host executa Git/Docker fora do container.</p>
+      </div>
+    </div>
+    <div class="step-grid">
+      <div><b>1</b><strong>Snapshot</strong><span>SQLite consistente</span></div>
+      <div><b>2</b><strong>Rollback</strong><span>imagem atual preservada</span></div>
+      <div><b>3</b><strong>Build</strong><span>nova imagem isolada</span></div>
+      <div><b>4</b><strong>Health</strong><span>/healthz obrigatório</span></div>
+    </div>
+    <div class="actions-row">
+      <form method="post" action="{{url_for('ops.update_request')}}" onsubmit="return confirm('Atualizar pelo canal STABLE agora?')">
+        <input type="hidden" name="channel" value="stable">
+        <button class="btn primary" type="submit">Atualizar STABLE</button>
+      </form>
+      <form method="post" action="{{url_for('ops.update_request')}}" onsubmit="return confirm('Instalar a versão BETA?')">
+        <input type="hidden" name="channel" value="beta">
+        <button class="btn ghost" type="submit">Atualizar BETA</button>
+      </form>
+    </div>
+    <pre class="mini-log" id="updateStatus">Consultando agente do host...</pre>
+    <p class="muted">O agente é iniciado automaticamente por <code>scripts/update.sh</code>. Se o host reiniciar e ele não estiver ativo, rode <code>nohup bash scripts/host-update-agent.sh &gt; multi-live/logs/update-agent.log 2&gt;&amp;1 &amp;</code>.</p>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(async()=>{
+  const box=document.getElementById('updateStatus');
+  async function poll(){
+    try{
+      const r=await fetch('{{url_for("ops.update_status")}}',{cache:'no-store'});
+      const d=await r.json();
+      const active=d.processing||d.queued;
+      if(active){
+        box.textContent=`${active.status==='queued'?'AGUARDANDO':'PROCESSANDO'} • ${String(active.channel||'').toUpperCase()} • solicitado em ${active.requested_at||''}`;
+      }else if(d.result){
+        box.textContent=`${d.result.ok?'SUCESSO':'FALHA'} • ${String(d.result.channel||'').toUpperCase()} • ${d.result.version||''}\n${d.result.message||''}\n${d.result.finished_at||''}`;
+      }else{
+        box.textContent='Agente pronto. Nenhuma atualização pendente.';
+      }
+    }catch(e){box.textContent='Não foi possível consultar o agente: '+e;}
+  }
+  poll();setInterval(poll,5000);
+})();
+</script>
+{% endblock %}

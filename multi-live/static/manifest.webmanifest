@@ -1,1 +1,18 @@
-{"name":"HostStorm Multi Live Professional","short_name":"HostStorm","start_url":"/","display":"standalone","background_color":"#07101d","theme_color":"#7c3aed","description":"Professional broadcast control plane for multi-platform live streaming","icons":[]}
+{
+  "name": "HostStorm Multi Live Professional",
+  "short_name": "HostStorm",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#07101d",
+  "theme_color": "#7c3aed",
+  "description": "Professional broadcast control plane for multi-platform live streaming",
+  "icons": [
+    {
+      "src": "/static/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
