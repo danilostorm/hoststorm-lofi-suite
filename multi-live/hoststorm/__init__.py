@@ -31,6 +31,12 @@ def create_app():
     # v3.1: fontes remotas entram antes dos wrappers profissionais/distribuídos,
     # para que telemetria, overlays e agentes herdem o mesmo comportamento.
     install_url_sources(app, db_module, legacy_web, streaming_module)
+
+    # web.py carrega scheduler.py cedo para expor due_info. Reapontamos a referência
+    # local do scheduler para a leitura de agendas já enriquecida com source_mode/URL.
+    from . import scheduler as scheduler_module
+    scheduler_module.list_schedules = db_module.list_schedules
+
     install_professional_streaming(streaming_module.MANAGER, streaming_module)
     install_advanced_overlays(streaming_module.MANAGER)
 
@@ -55,7 +61,7 @@ def create_app():
     app.register_blueprint(urlmedia_bp)
 
     streaming_module.MANAGER.start_threads()
-    from .scheduler import SCHEDULER
+    SCHEDULER = scheduler_module.SCHEDULER
     SCHEDULER.start()
     from .broadcast import BROADCAST
     BROADCAST.start(streaming_module.MANAGER)
