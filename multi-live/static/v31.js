@@ -24,6 +24,8 @@
   const durationInput=$('#sourceDuration');
   const extractorInput=$('#sourceExtractor');
   const previewInput=$('#sourcePreviewUrl');
+  const maxDurationInput=$('[name="max_duration_minutes"]');
+  const stopBeforeInput=$('[name="stop_before_seconds"]');
 
   function renderPreview(url,kind){
     if(!preview)return;
@@ -32,6 +34,20 @@
     if(kind==='iframe'||url.includes('youtube-nocookie.com/embed/')) preview.innerHTML=`<iframe src="${safe}" title="Preview" loading="lazy" allow="encrypted-media; picture-in-picture" allowfullscreen></iframe>`;
     else preview.innerHTML=`<video src="${safe}" controls muted playsinline preload="metadata"></video>`;
   }
+  function autoDurationLimit(seconds){
+    const duration=Math.max(0,Number(seconds)||0);if(!duration||!maxDurationInput)return;
+    const current=Number(maxDurationInput.value)||0;
+    if(current===0||maxDurationInput.dataset.hoststormAuto==='1'){
+      maxDurationInput.value=String(Math.ceil(duration/60));
+      maxDurationInput.dataset.hoststormAuto='1';
+    }
+    const stop=Math.max(0,Number(stopBeforeInput?.value)||0);
+    const useful=Math.max(0,duration-stop);
+    maxDurationInput.title=`Duração detectada ${hms(duration)} • live prevista ${hms(useful)} após parar ${Math.round(stop)}s antes`;
+  }
+  maxDurationInput?.addEventListener('input',()=>{maxDurationInput.dataset.hoststormAuto='0'});
+  if(Number(durationInput?.value)>0)autoDurationLimit(durationInput.value);
+
   function clearProbe(){if(!sourceUrl)return;if(probeUrl&&probeUrl.value===sourceUrl.value.trim())return;if(probeUrl)probeUrl.value='';if(titleInput)titleInput.value='';if(durationInput)durationInput.value='0';if(extractorInput)extractorInput.value='';if(previewInput)previewInput.value='';if(analysis)analysis.classList.remove('ready')}
   sourceUrl?.addEventListener('input',clearProbe);
   if(previewInput?.value)renderPreview(previewInput.value,previewInput.value.includes('youtube-nocookie.com/embed/')?'iframe':'video');
@@ -43,6 +59,7 @@
       const r=await fetch('/api/media/probe-url',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
       const d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||'Não foi possível analisar a URL.');
       if(probeUrl)probeUrl.value=url;if(titleInput)titleInput.value=d.title||'';if(durationInput)durationInput.value=d.duration_seconds||0;if(extractorInput)extractorInput.value=d.extractor||'';if(previewInput)previewInput.value=d.preview_url||'';
+      if(d.duration_seconds)autoDurationLimit(d.duration_seconds);
       if(title)title.textContent=d.title||'Fonte remota';if(durationLabel)durationLabel.textContent=d.duration_seconds?`⏱ ${hms(d.duration_seconds)}`:'⏱ duração não informada';if(extractorLabel)extractorLabel.textContent=d.extractor||'URL direta / ffprobe';
       renderPreview(d.preview_url,d.preview_kind);analysis?.classList.add('ready');
     }catch(e){if(title)title.textContent='Falha ao analisar';if(durationLabel)durationLabel.textContent='⏱ duração pendente';if(extractorLabel)extractorLabel.textContent=String(e.message||e);renderPreview('','');analysis?.classList.remove('ready');alert(e.message||e)}
