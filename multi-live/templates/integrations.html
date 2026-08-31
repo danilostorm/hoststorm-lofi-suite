@@ -1,1 +1,80 @@
-{% extends 'base.html' %}{% block title %}Integrações • HostStorm{% endblock %}{% block heading %}Integrações oficiais{% endblock %}{% block subheading %}Validação opcional do estado real nas plataformas, além do envio RTMP.{% endblock %}{% block content %}<div class="dashboard-grid"><section class="panel span-2"><div class="panel-head"><div><h2>Contas conectadas</h2><p>Credenciais ficam criptografadas no SQLite.</p></div></div><div class="live-list">{% for i in integrations %}<div class="live-row"><div><span class="status-pill">{{i.provider|upper}}</span><h3>{{i.name}}</h3><small class="muted">{{i.config}}</small></div><div class="live-actions"><form method="post" action="{{url_for('pro.integration_check',iid=i.id)}}"><button class="btn ghost">Testar API</button></form><form method="post" action="{{url_for('pro.integration_delete',iid=i.id)}}" onsubmit="return confirm('Remover integração?')"><button class="btn danger">Remover</button></form></div></div>{% else %}<div class="empty-state">Nenhuma integração cadastrada.</div>{% endfor %}</div></section><section class="panel"><div class="panel-head"><div><h2>Adicionar integração</h2></div></div><form method="post"><label>Provider<select name="provider" id="provider"><option value="twitch">Twitch</option><option value="youtube">YouTube</option></select></label><label>Nome<input name="name" required placeholder="Canal principal"></label><div id="twitchFields"><label>Client ID<input name="client_id"></label><label>Access token<input type="password" name="access_token"></label><label>Channel login<input name="channel_login"></label></div><div id="youtubeFields" style="display:none"><label>API key<input type="password" name="api_key"></label><label>Channel ID<input name="channel_id"></label></div><label class="check-row"><input type="checkbox" name="enabled" checked> Ativa</label><button class="btn primary full">Salvar integração</button></form></section></div><script>provider.onchange=()=>{twitchFields.style.display=provider.value==='twitch'?'block':'none';youtubeFields.style.display=provider.value==='youtube'?'block':'none'}</script>{% endblock %}
+{% extends 'base.html' %}
+{% block title %}Integrações • HostStorm{% endblock %}
+{% block heading %}Integrações oficiais{% endblock %}
+{% block subheading %}Conecte contas para validar o estado real e automatizar título, categoria e descrição nas lives agendadas.{% endblock %}
+{% block content %}
+<div class="integration-layout">
+  <section class="panel integration-list-panel">
+    <div class="panel-head"><div><h2>Contas conectadas</h2><p>Tokens e credenciais ficam criptografados no SQLite. As contas ativas aparecem automaticamente no agendamento.</p></div></div>
+    <div class="integration-grid">
+      {% for i in integrations %}
+        {% set spec=integration_provider_specs.get(i.provider,{}) %}
+        <article class="integration-card">
+          <div class="integration-card-head"><div><span class="status-pill {{'running' if i.enabled else 'offline'}}">{{spec.get('label',i.provider|upper)}}</span><h3>{{i.name}}</h3></div><span class="integration-state">{{'ATIVA' if i.enabled else 'PAUSADA'}}</span></div>
+          <div class="capability-line">{% for cap in spec.get('capabilities',[]) %}<span class="platform-chip">{{ {'title':'Título','category':'Categoria','description':'Descrição'}.get(cap,cap) }}</span>{% endfor %}</div>
+          <div class="integration-identity">
+            {% if i.config.channel_login %}<span>Canal: <strong>{{i.config.channel_login}}</strong></span>{% endif %}
+            {% if i.config.channel_slug %}<span>Canal: <strong>{{i.config.channel_slug}}</strong></span>{% endif %}
+            {% if i.config.channel_id %}<span>Channel ID: <strong>{{i.config.channel_id}}</strong></span>{% endif %}
+            {% if i.config.broadcast_id %}<span>Broadcast: <strong>{{i.config.broadcast_id}}</strong></span>{% endif %}
+            {% if i.provider=='webhook' and i.config.endpoint_url %}<span>Endpoint: <strong>{{i.config.endpoint_url}}</strong></span>{% endif %}
+          </div>
+          <p class="field-note">{{spec.get('hint','')}}</p>
+          <div class="card-actions"><form method="post" action="{{url_for('pro.integration_check',iid=i.id)}}"><button class="btn ghost">Testar API</button></form><form method="post" action="{{url_for('pro.integration_delete',iid=i.id)}}" onsubmit="return confirm('Remover integração?')"><button class="btn danger">Remover</button></form></div>
+        </article>
+      {% else %}
+        <div class="empty-state">Nenhuma integração cadastrada.</div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="panel integration-add-panel">
+    <div class="panel-head"><div><h2>Adicionar integração</h2><p>Use tokens OAuth com as permissões indicadas abaixo.</p></div></div>
+    <form method="post" action="{{url_for('automation.integration_save')}}" id="integrationForm">
+      <label>Plataforma<select name="provider" id="provider">{% for key,spec in integration_provider_specs.items() %}<option value="{{key}}">{{spec.label}}</option>{% endfor %}</select></label>
+      <label>Nome da conexão<input name="name" required placeholder="Ex.: Canal principal"></label>
+
+      <div class="provider-box" data-provider="twitch">
+        <div class="provider-note"><strong>Twitch</strong><span>Escopo necessário: <code>channel:manage:broadcast</code></span></div>
+        <label>Client ID<input name="client_id" autocomplete="off"></label>
+        <label>OAuth Access Token<input type="password" name="access_token" autocomplete="new-password"></label>
+        <label>Channel login<input name="channel_login" placeholder="seucanal"></label>
+        <label>Broadcaster ID <small>(opcional)</small><input name="broadcaster_id" placeholder="detectado pelo login se vazio"></label>
+      </div>
+
+      <div class="provider-box" data-provider="youtube" hidden>
+        <div class="provider-note"><strong>YouTube</strong><span>Para escrever metadados use OAuth com <code>youtube.force-ssl</code>.</span></div>
+        <label>OAuth Access Token<input type="password" name="access_token" autocomplete="new-password"></label>
+        <label>Channel ID <small>(opcional para conferência)</small><input name="channel_id"></label>
+        <label>API key <small>(opcional; ajuda nas consultas públicas)</small><input type="password" name="api_key"></label>
+        <label>Broadcast ID <small>(opcional)</small><input name="broadcast_id" placeholder="vazio = localizar live ativa/próxima"></label>
+      </div>
+
+      <div class="provider-box" data-provider="kick" hidden>
+        <div class="provider-note"><strong>Kick</strong><span>Use OAuth com <code>channel:read channel:write</code>.</span></div>
+        <label>OAuth Access Token<input type="password" name="access_token" autocomplete="new-password"></label>
+        <label>Channel slug<input name="channel_slug" placeholder="seucanal"></label>
+      </div>
+
+      <div class="provider-box" data-provider="webhook" hidden>
+        <div class="provider-note"><strong>Webhook / API externa</strong><span>Recebe JSON com título, categoria, descrição, canal e agenda.</span></div>
+        <label>Endpoint URL<input type="url" name="endpoint_url" placeholder="https://automacao.exemplo/hoststorm"></label>
+        <label>Bearer token <small>(opcional)</small><input type="password" name="bearer_token"></label>
+      </div>
+
+      <label class="check-row"><input type="checkbox" name="enabled" checked> Integração ativa</label>
+      <button class="btn primary full">Salvar integração</button>
+    </form>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(()=>{
+  const provider=document.getElementById('provider');
+  const boxes=[...document.querySelectorAll('.provider-box')];
+  const refresh=()=>boxes.forEach(box=>box.hidden=box.dataset.provider!==provider.value);
+  provider.addEventListener('change',refresh); refresh();
+})();
+</script>
+{% endblock %}
