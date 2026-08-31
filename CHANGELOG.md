@@ -1,3 +1,19 @@
+# 3.3.0
+
+HostStorm Multi Live Manager 3.3 — Kick OAuth & Schedule Timing.
+
+## Novo / corrigido
+- integração Kick passa a usar o fluxo oficial OAuth 2.1 Authorization Code + PKCE como método recomendado;
+- uma única aplicação Kick pode autorizar contas no HostStorm; não é necessário criar uma aplicação nova por canal;
+- access token e refresh token da Kick são armazenados criptografados e renovados automaticamente antes de expirar;
+- escopos solicitados pela automação Kick: `user:read channel:read channel:write`;
+- callback padrão do HostStorm: `/api/kick/oauth/callback`, preferencialmente fixado por `HOSTSTORM_PUBLIC_URL`;
+- integração Kick pode ser editada e reautorizada sem remover/recriar o cadastro;
+- botão `Testar API` agora usa o verificador atual também para Kick;
+- modo de token manual permanece disponível apenas como compatibilidade;
+- análise de URL/YouTube passa a preencher automaticamente o limite de segurança em minutos a partir da duração detectada;
+- a duração exata em segundos continua sendo a fonte principal do encerramento: o limite em minutos funciona apenas como teto de segurança.
+
 # 3.2.0
 
 HostStorm Multi Live Manager 3.2 — Account & Broadcast Automation.
