@@ -1,28 +1,36 @@
-# HostStorm Multi Live Manager 3.0 Professional — RC1
+# HostStorm Multi Live Manager 3.0 Professional
 
-Esta release candidate amplia a base 2.0 sem alterar os volumes persistentes.
+Versão final do control plane profissional de transmissão do HostStorm.
 
-## Núcleo Professional incluído
-- login por sessão, papéis Admin/Operador/Visualização, 2FA TOTP com QR e proteção contra brute force;
-- criptografia das stream keys e credenciais sensíveis no SQLite;
-- API tokens com escopos;
-- perfis de transmissão e detecção automática de libx264/NVENC/QSV/VAAPI;
-- telemetria FFmpeg por plataforma (FPS, bitrate, speed, qualidade) e alertas;
-- failover de fonte para vídeo reserva/tela de manutenção;
-- gravação única por sessão, marcadores e geração de clipes;
-- grade 24/7 com rotação anti-repetição, vinhetas e intervalos comerciais;
-- importação por URL, watch folder automática e retenção programada;
-- PWA instalável e NOC Wall;
-- multi-servidor com agentes, placement por prioridade/carga/tags e failover;
-- backups/restore pelo painel e snapshots automáticos;
-- analytics, diagnóstico, central de alertas e integrações opcionais YouTube/Twitch;
-- API REST v1 para status, controle, biblioteca, agenda, agentes e marcadores.
-
-## GPU
-O container padrão continua compatível com CPU. Para Intel/AMD VAAPI, use o override `docker-compose.vaapi.yml` quando `/dev/dri` existir no host. NVIDIA depende do NVIDIA Container Toolkit do host e da exposição da GPU ao container.
+## Incluído na 3.0
+- login por sessão, Admin/Operador/Visualização, proteção contra brute force e 2FA TOTP;
+- criptografia de stream keys e credenciais com chave persistente independente da senha administrativa;
+- API Tokens com escopos e API REST v1;
+- perfis de transmissão e suporte automático a libx264/NVENC/QSV/VAAPI;
+- telemetria FFmpeg por plataforma, qualidade e alertas;
+- recuperação individual de destinos, failover de fonte e mídia de manutenção;
+- gravação, marcadores e clipes;
+- grade 24/7, rotação anti-repetição, vinhetas e comerciais;
+- overlays com texto, relógio, logo, QR Code e informações da programação;
+- importação por URL, watch folder e retenção automática;
+- PWA instalável, Web Push e NOC Wall;
+- multi-servidor com placement por carga/tags, failover e sincronização automática de mídia;
+- backups/restore, analytics, diagnóstico, alertas e integrações opcionais YouTube/Twitch;
+- updater STABLE/BETA solicitado pelo painel e executado por agente seguro no host;
+- CI com compilação, testes, Docker build e smoke test `/healthz`.
 
 ## Segurança
-Defina `HOSTSTORM_SECRET_KEY` antes da produção. A chave deve permanecer estável: ela é usada para criptografar stream keys, TOTP e credenciais de integrações.
+`HOSTSTORM_SECRET_KEY` pode ser configurada explicitamente e deve permanecer estável. Sem essa variável, a 3.0 gera uma chave aleatória persistente em `multi-live/data/security.key`. Não apague essa chave após a migração.
 
-## Estado
-RC1 permanece na branch `v3-professional` até CI, Docker smoke test e testes de migração passarem. Não usar em produção antes da promoção para `main`.
+## Dados persistentes
+A 3.0 preserva `multi-live/data`, `multi-live/media`, `multi-live/logs`, `.env` e os diretórios persistentes do Loop Studio.
+
+## Instalação/upgrade
+```bash
+cd /mnt/user/appdata/hoststorm-lofi-suite
+git pull --ff-only
+cat VERSION
+bash scripts/update.sh
+```
+
+Versão esperada: `3.0.0`.

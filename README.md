@@ -1,75 +1,67 @@
-# HostStorm Lo-fi Suite
+# HostStorm Multi Live Manager 3.0 Professional
 
-Suite para criação de loops e gerenciamento de múltiplas transmissões RTMP no Unraid.
+A versão 3.0 transforma o Multi Live Manager em um control plane profissional de transmissão, mantendo compatibilidade com os dados persistentes da 2.0.
 
-## HostStorm Multi Live Manager 2.0
+## Operação e transmissão
+- Dashboard, Lives, Agendamentos, Biblioteca, Histórico, Logs e Configurações separados.
+- Agendas semanais, diárias, segunda a sexta, datas únicas, múltiplos dias, validade e políticas de conflito.
+- Plataformas independentes por agenda, playlists, shuffle, repetição e parada antecipada configurável.
+- Processos FFmpeg independentes por plataforma, recuperação isolada e backoff automático.
+- Perfis de transmissão e detecção automática de CPU/libx264, NVIDIA NVENC, Intel QSV e VAAPI.
+- Telemetria em tempo real por plataforma: FPS, bitrate, velocidade, frames perdidos e qualidade.
+- Failover de fonte com vídeo reserva e tela de manutenção.
+- Gravação local única por sessão, marcadores e geração de clipes.
 
-A versão 2.0 reorganiza o Multi Live como uma aplicação normal e modular. O código do Multi Live agora fica diretamente no Git (`app.py`, pacote `hoststorm/`, `templates/` e `static/`), sem Base85 e sem patches aplicados durante o build.
+## Broadcast 24/7
+- Grade de programação contínua com rotação anti-repetição.
+- Vinhetas, bumpers e intervalos comerciais.
+- Preenchimento automático da grade a partir da biblioteca.
+- Overlays profissionais com texto, relógio, logo, QR Code, programa atual e próximo programa.
+- NOC Wall para monitoramento em tela grande.
 
-### Principais recursos
+## Biblioteca e automação
+- Biblioteca com metadados, preview, duração, resolução, codec, FPS, tamanho, SHA-256 e duplicados.
+- Importação por URL com yt-dlp.
+- Watch folder para ingestão automática.
+- Retenção programada de logs, temporários, gravações, clipes e backups.
+- Diagnóstico de FFmpeg/FFprobe, SQLite, DNS, permissões, disco e encoder.
 
-- Dashboard com lives ativas, próxima agenda, agenda do dia, CPU, RAM, disco e histórico.
-- Página separada para Lives, Agendamentos, Biblioteca, Histórico, Logs e Configurações.
-- SQLite em `/app/data/hoststorm.db` com WAL, histórico e auditoria.
-- Migração automática do antigo `/app/data/channels.json`, preservando um backup `channels.json.pre-v2-backup`.
-- Agendamento semanal, diário, segunda a sexta e data única.
-- Vários dias por agenda, intervalo de validade e políticas de conflito.
-- Plataformas independentes por agendamento.
-- Playlist com vários vídeos, embaralhamento e repetição.
-- Encerramento configurável antes do fim da mídia; padrão continua em 60 segundos.
-- Pré-teste de mídia, FFmpeg/FFprobe e destinos RTMP.
-- Biblioteca com preview, duração, resolução, codec, FPS, tamanho, SHA-256 e detecção de duplicados.
-- Histórico de execuções e histórico individual por plataforma.
-- Cada plataforma usa seu próprio processo FFmpeg: se Twitch cair, Twitch é recuperada sem derrubar Kick/YouTube.
-- Backoff de recuperação: 5s, 15s, 30s e 60s.
-- Notificações opcionais via Telegram, Discord e webhook genérico.
-- Atualização de status em tempo real via SSE + API de status.
-- Scripts de atualização e rollback com health check.
-- GitHub Actions com testes, compilação e Docker build.
+## Segurança
+- Login por sessão e papéis Admin, Operador e Visualização.
+- Proteção contra brute force e 2FA TOTP com QR Code.
+- API Tokens com escopos.
+- Stream keys, TOTP e credenciais sensíveis criptografados.
+- Em instalações novas da 3.0, a chave de criptografia é gerada e persistida em `multi-live/data/security.key`, independente da senha administrativa.
+- Se `HOSTSTORM_SECRET_KEY` estiver configurada, ela permanece a chave principal e deve continuar estável.
 
-## Serviços
+> Não apague `multi-live/data/security.key` depois que ela for criada. Não altere uma `HOSTSTORM_SECRET_KEY` já utilizada para criptografar dados.
 
-- Loop Studio: `3035`
-- Multi Live Manager: `3040`
+## PWA e notificações
+- PWA instalável no celular/desktop.
+- Atualização de status por SSE.
+- Web Push real: alertas podem chegar mesmo com o painel fechado, após o usuário autorizar o dispositivo.
+- Chaves VAPID são geradas e persistidas automaticamente em `multi-live/data/`, ou podem ser fornecidas por variáveis de ambiente.
+- Telegram, Discord e webhook genérico continuam disponíveis.
 
-## Atualizar no Unraid
+## Multi-servidor
+- Nós/agents com seleção Local, Específica ou Automática.
+- Placement por prioridade, CPU, RAM, GPU, quantidade de streams e tags.
+- Failover para outro nó quando o servidor ativo deixa de responder.
+- Sincronização automática das mídias necessárias antes de delegar a live para um nó remoto.
+- API REST v1 para status, controle, biblioteca, agenda, agentes, heartbeat e marcadores.
 
-```bash
-cd /mnt/user/appdata/hoststorm-lofi-suite
-bash scripts/update.sh
-```
+## Backup e atualização
+- Backup e restore do SQLite pelo painel.
+- Snapshots automáticos e retenção.
+- `scripts/update.sh` preserva uma imagem de rollback, faz build, recria o serviço e exige `/healthz` saudável.
+- A página **Atualizações** pode solicitar STABLE ou BETA. A execução de Git/Docker ocorre no host por `scripts/host-update-agent.sh`; o container web não recebe acesso ao Docker socket.
+- Após uma atualização manual bem-sucedida, `scripts/update.sh` inicia o agente do host automaticamente.
 
-O script:
+## GPU
+O container padrão continua funcionando em CPU. Para Intel/AMD VAAPI existe `docker-compose.vaapi.yml`. NVIDIA requer NVIDIA Container Toolkit no host e exposição da GPU ao container.
 
-1. salva backup do SQLite existente;
-2. marca a imagem Docker atual como rollback;
-3. executa `git pull --ff-only`;
-4. constrói o Multi Live;
-5. recria o container;
-6. verifica `/healthz`;
-7. executa rollback automaticamente se o serviço novo não ficar saudável.
-
-Rollback manual:
-
-```bash
-cd /mnt/user/appdata/hoststorm-lofi-suite
-bash scripts/rollback.sh
-```
-
-## Atualização manual
-
-```bash
-cd /mnt/user/appdata/hoststorm-lofi-suite
-git pull --ff-only
-docker compose build multi-live
-docker compose up -d --force-recreate multi-live
-curl -fsS http://127.0.0.1:3040/healthz
-```
-
-## Dados persistentes
-
-O Git não altera:
-
+## Compatibilidade e dados persistentes
+A migração v2/SQLite permanece válida e o Git não substitui os volumes persistentes:
 - `multi-live/data/`
 - `multi-live/media/`
 - `multi-live/logs/`
@@ -78,4 +70,18 @@ O Git não altera:
 - `loop-studio/logos/`
 - `.env`
 
-Nunca envie stream keys ou `.env` ao repositório.
+## Atualizar no Unraid
+```bash
+cd /mnt/user/appdata/hoststorm-lofi-suite
+git pull --ff-only
+cat VERSION
+bash scripts/update.sh
+```
+
+O `cat VERSION` deve mostrar `3.0.0`. Ao final, o health check deve retornar `ok: true`.
+
+Rollback manual:
+```bash
+cd /mnt/user/appdata/hoststorm-lofi-suite
+bash scripts/rollback.sh
+```

@@ -9,9 +9,36 @@ ROLLBACK_TAG="$IMAGE:rollback"
 BACKUP_DIR="$ROOT/multi-live/data/backups"
 mkdir -p "$BACKUP_DIR"
 STAMP="$(date +%Y%m%d-%H%M%S)"
+BACKUP_FILE="$BACKUP_DIR/hoststorm-pre-update-$STAMP.db"
 
-if [ -f "$ROOT/multi-live/data/hoststorm.db" ]; then
-  cp -a "$ROOT/multi-live/data/hoststorm.db" "$BACKUP_DIR/hoststorm-$STAMP.db"
+# Snapshot consistente do SQLite usando o Python do container em execução.
+# Fallback: copia DB + WAL/SHM para não perder transações ainda não checkpointadas.
+backup_ok=0
+if docker compose ps --status running --services 2>/dev/null | grep -qx 'multi-live'; then
+  if docker compose exec -T multi-live python - "$STAMP" <<'PY'
+import sqlite3, sys
+from pathlib import Path
+stamp=sys.argv[1]
+src=Path('/app/data/hoststorm.db')
+out=Path('/app/data/backups')/f'hoststorm-pre-update-{stamp}.db'
+out.parent.mkdir(parents=True,exist_ok=True)
+if src.exists():
+    a=sqlite3.connect(src,timeout=30)
+    b=sqlite3.connect(out)
+    try:
+        a.backup(b)
+    finally:
+        b.close(); a.close()
+PY
+  then
+    [ ! -f "$ROOT/multi-live/data/hoststorm.db" ] || [ -s "$BACKUP_FILE" ] && backup_ok=1
+  fi
+fi
+
+if [ "$backup_ok" != "1" ] && [ -f "$ROOT/multi-live/data/hoststorm.db" ]; then
+  cp -a "$ROOT/multi-live/data/hoststorm.db" "$BACKUP_FILE"
+  [ -f "$ROOT/multi-live/data/hoststorm.db-wal" ] && cp -a "$ROOT/multi-live/data/hoststorm.db-wal" "$BACKUP_FILE-wal" || true
+  [ -f "$ROOT/multi-live/data/hoststorm.db-shm" ] && cp -a "$ROOT/multi-live/data/hoststorm.db-shm" "$BACKUP_FILE-shm" || true
 fi
 
 if docker image inspect "$IMAGE" >/dev/null 2>&1; then
