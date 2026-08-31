@@ -68,13 +68,3 @@
   </section>
 </div>
 {% endblock %}
-{% block scripts %}
-<script>
-(()=>{
-  const provider=document.getElementById('provider');
-  const boxes=[...document.querySelectorAll('.provider-box')];
-  const refresh=()=>boxes.forEach(box=>box.hidden=box.dataset.provider!==provider.value);
-  provider.addEventListener('change',refresh); refresh();
-})();
-</script>
-{% endblock %}
