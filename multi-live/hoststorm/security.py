@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import os
 import secrets
+import sqlite3
 import struct
 import time
 from dataclasses import dataclass
@@ -12,11 +13,64 @@ from dataclasses import dataclass
 from cryptography.fernet import Fernet, InvalidToken
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from .config import DATA_DIR, DB_PATH
+
 PBKDF2_ROUNDS = 390000
+KEY_PATH = DATA_DIR / 'security.key'
+
+
+def _database_has_v3_encrypted_secrets() -> bool:
+    try:
+        if not DB_PATH.exists():
+            return False
+        con = sqlite3.connect(DB_PATH, timeout=3)
+        try:
+            row = con.execute(
+                "SELECT 1 FROM destinations WHERE stream_key LIKE 'enc:v1:%' LIMIT 1"
+            ).fetchone()
+            return bool(row)
+        finally:
+            con.close()
+    except Exception:
+        return False
+
+
+def _persistent_secret() -> str:
+    if KEY_PATH.exists():
+        try:
+            value = KEY_PATH.read_text(encoding='utf-8').strip()
+            if value:
+                return value
+        except Exception:
+            pass
+
+    # Compatibilidade com RCs anteriores: se já houver dados enc:v1 e nenhuma chave
+    # persistente, mantenha a senha administrativa como material antigo.
+    legacy_admin = os.environ.get('LV2_ADMIN_PASSWORD', '').strip()
+    if legacy_admin and _database_has_v3_encrypted_secrets():
+        return legacy_admin
+
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    value = secrets.token_urlsafe(48)
+    tmp = KEY_PATH.with_suffix('.tmp')
+    try:
+        tmp.write_text(value, encoding='utf-8')
+        try:
+            os.chmod(tmp, 0o600)
+        except OSError:
+            pass
+        os.replace(tmp, KEY_PATH)
+        return value
+    except Exception:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return legacy_admin or 'hoststorm-dev-key'
 
 
 def _key_material() -> bytes:
-    raw = os.environ.get('HOSTSTORM_SECRET_KEY') or os.environ.get('LV2_ADMIN_PASSWORD') or 'hoststorm-dev-key'
+    raw = os.environ.get('HOSTSTORM_SECRET_KEY', '').strip() or _persistent_secret()
     return hashlib.sha256(raw.encode('utf-8')).digest()
 
 
@@ -100,23 +154,28 @@ class RateWindow:
 
 class LoginLimiter:
     def __init__(self, max_attempts=8, window_seconds=900, block_seconds=900):
-        self.max_attempts=max_attempts; self.window_seconds=window_seconds; self.block_seconds=block_seconds
+        self.max_attempts = max_attempts
+        self.window_seconds = window_seconds
+        self.block_seconds = block_seconds
         self.state: dict[str, RateWindow] = {}
 
     def allowed(self, key: str) -> bool:
-        now=time.time(); w=self.state.get(key)
+        now = time.time()
+        w = self.state.get(key)
         return not w or w.blocked_until <= now
 
     def fail(self, key: str):
-        now=time.time(); w=self.state.get(key) or RateWindow()
-        if not w.first_at or now-w.first_at > self.window_seconds:
-            w=RateWindow(count=0, first_at=now)
+        now = time.time()
+        w = self.state.get(key) or RateWindow()
+        if not w.first_at or now - w.first_at > self.window_seconds:
+            w = RateWindow(count=0, first_at=now)
         w.count += 1
         if w.count >= self.max_attempts:
-            w.blocked_until=now+self.block_seconds
-        self.state[key]=w
+            w.blocked_until = now + self.block_seconds
+        self.state[key] = w
 
     def success(self, key: str):
         self.state.pop(key, None)
 
-LOGIN_LIMITER=LoginLimiter()
+
+LOGIN_LIMITER = LoginLimiter()

@@ -4,6 +4,7 @@ import hoststorm.db as db
 import hoststorm.distributed as distributed
 import hoststorm.pro_db as pro_db
 import hoststorm.push as push
+import hoststorm.security as security
 from hoststorm.broadcast import block_active, list_blocks, save_block
 from hoststorm.overlay_pro import _advanced_graph
 from hoststorm.professional import quality_label
@@ -30,6 +31,19 @@ def test_password_hash():
     h = hash_password('senha-forte')
     assert verify_password(h, 'senha-forte')
     assert not verify_password(h, 'errada')
+
+
+def test_persistent_security_key(tmp_path, monkeypatch):
+    setup_db(tmp_path)
+    monkeypatch.delenv('HOSTSTORM_SECRET_KEY', raising=False)
+    monkeypatch.delenv('LV2_ADMIN_PASSWORD', raising=False)
+    monkeypatch.setattr(security, 'DATA_DIR', tmp_path)
+    monkeypatch.setattr(security, 'DB_PATH', db.DB_PATH)
+    monkeypatch.setattr(security, 'KEY_PATH', tmp_path / 'security.key')
+    first = security._key_material()
+    second = security._key_material()
+    assert first == second
+    assert (tmp_path / 'security.key').exists()
 
 
 def test_pro_users_profiles_and_tokens(tmp_path):
