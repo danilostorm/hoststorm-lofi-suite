@@ -10,6 +10,7 @@ def create_app():
     from .pro_db import init_pro_db
     from .push import init_push_db
     from .secure_compat import install_secure_compat
+    from .url_sources import install_url_sources, urlmedia_bp
     from .pro_streaming import install_professional_streaming
     from .overlay_pro import install_advanced_overlays
 
@@ -27,6 +28,9 @@ def create_app():
     init_pro_db(ADMIN_USER, ADMIN_PASSWORD)
     init_push_db()
     install_secure_compat(db_module, legacy_web, streaming_module)
+    # v3.1: fontes remotas entram antes dos wrappers profissionais/distribuídos,
+    # para que telemetria, overlays e agentes herdem o mesmo comportamento.
+    install_url_sources(app, db_module, legacy_web, streaming_module)
     install_professional_streaming(streaming_module.MANAGER, streaming_module)
     install_advanced_overlays(streaming_module.MANAGER)
 
@@ -48,6 +52,7 @@ def create_app():
     app.register_blueprint(legacy_web.bp)
     app.register_blueprint(pro_bp)
     app.register_blueprint(ops_bp)
+    app.register_blueprint(urlmedia_bp)
 
     streaming_module.MANAGER.start_threads()
     from .scheduler import SCHEDULER

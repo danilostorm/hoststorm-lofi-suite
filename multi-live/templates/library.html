@@ -1,1 +1,64 @@
-{% extends 'base.html' %}{% block title %}Biblioteca • HostStorm{% endblock %}{% block heading %}Biblioteca Inteligente{% endblock %}{% block subheading %}Preview, metadados, importação por URL, watch folder, hash e detecção de duplicados.{% endblock %}{% block content %}<div class="dashboard-grid"><section class="panel span-2 upload-panel"><form action="{{url_for('web.library_upload')}}" method="post" enctype="multipart/form-data"><input type="file" name="files" multiple required><button class="btn primary">Enviar arquivos</button></form><a class="btn ghost" href="{{url_for('web.library',duplicates=1)}}">Detectar duplicados</a></section><section class="panel"><div class="panel-head"><div><h2>Importar por URL</h2><p>yt-dlp quando disponível; download direto como fallback.</p></div></div><form action="{{url_for('pro.library_import')}}" method="post"><label>URL<input name="url" type="url" required placeholder="https://..."></label><label>Tipo<select name="kind"><option value="video">Vídeo</option><option value="audio">Áudio</option></select></label><button class="btn primary full">Importar em segundo plano</button></form><form action="{{url_for('pro.watch_folder_scan')}}" method="post"><button class="btn ghost full">Escanear watch folder</button></form></section></div><div class="library-grid">{% for m in items %}<article class="media-card"><div class="media-preview">{% if m.kind=='video' %}<video preload="metadata" muted controls src="{{url_for('web.library_file',kind=m.kind,filename=m.filename)}}"></video>{% else %}<div class="audio-icon">🎵</div>{% endif %}</div><div class="media-body"><span class="eyebrow">{{m.kind|upper}}</span>{% if dupes.get(m.filename) %}<span class="duplicate-badge">DUPLICADO</span>{% endif %}<h3 title="{{m.filename}}">{{m.filename}}</h3>{% if dupes.get(m.filename) %}<div class="duplicate-note">Mesmo conteúdo de: {{dupes[m.filename]|join(', ')}}</div>{% endif %}<div class="media-meta"><span>⏱ {{m.duration_seconds|duration_hms}}</span>{% if m.width %}<span>▣ {{m.width}}×{{m.height}}</span>{% endif %}<span>💾 {{m.size_bytes|filesize}}</span>{% if m.codec %}<span>{{m.codec}}</span>{% endif %}{% if m.fps %}<span>{{m.fps}} FPS</span>{% endif %}<span>Usado: {{m.usage_count}}</span></div><div class="card-actions"><a class="btn ghost" href="{{url_for('web.library_file',kind=m.kind,filename=m.filename)}}">Abrir</a><button class="btn ghost media-hash" data-kind="{{m.kind}}" data-file="{{m.filename}}">SHA-256</button><form action="{{url_for('web.library_delete',kind=m.kind,filename=m.filename)}}" method="post" onsubmit="return confirm('Excluir este arquivo?')"><button class="btn danger">Excluir</button></form></div></div></article>{% else %}<div class="empty-state panel">Biblioteca vazia.</div>{% endfor %}</div>{% endblock %}
+{% extends 'base.html' %}
+{% block title %}Biblioteca • HostStorm{% endblock %}
+{% block heading %}Biblioteca Inteligente{% endblock %}
+{% block subheading %}Arquivos locais, preview, metadados, importação com yt-dlp e detecção de duplicados.{% endblock %}
+{% block content %}
+{% set yt=ytdlp_status() %}
+<div class="library-tools">
+  <section class="panel library-upload-card">
+    <div class="panel-head"><div><h2>Adicionar arquivos</h2><p>Vídeos e áudios enviados diretamente para a biblioteca.</p></div></div>
+    <form action="{{url_for('web.library_upload')}}" method="post" enctype="multipart/form-data" class="compact-upload-form">
+      <label class="file-drop" for="libraryFiles"><span class="file-drop-icon">＋</span><span><strong>Escolher arquivos</strong><small id="libraryFileLabel">Nenhum arquivo selecionado</small></span></label>
+      <input class="native-file-hidden" id="libraryFiles" type="file" name="files" multiple required>
+      <button class="btn primary" type="submit">Enviar arquivos</button>
+    </form>
+  </section>
+
+  <section class="panel library-import-card">
+    <div class="panel-head"><div><h2>Importar por URL</h2><p>YouTube e outros sites suportados, além de URLs diretas.</p></div><span class="status-pill {{'running' if yt.ok else 'failed'}}">{{'YT-DLP ATIVO' if yt.ok else 'YT-DLP OFF'}}</span></div>
+    <div class="tool-status"><strong>{{yt.message}}</strong><small>{% if yt.node %}Node JS ativo para extração moderna.{% else %}Runtime Node JS não detectado.{% endif %}</small></div>
+    <form action="{{url_for('urlmedia.library_import_url')}}" method="post" class="library-url-form">
+      <label>URL<input name="url" type="url" required placeholder="https://youtube.com/watch?v=... ou https://site/video.mp4"></label>
+      <div class="form-grid two"><label>Importar como<select name="kind"><option value="video">Vídeo até 1080p</option><option value="audio">Áudio MP3</option></select></label><div class="import-hint">A tarefa roda em segundo plano. O resultado aparece em Alertas e depois na biblioteca.</div></div>
+      <button class="btn primary full">Importar com yt-dlp</button>
+    </form>
+  </section>
+
+  <section class="panel library-maintenance-card">
+    <div class="panel-head"><div><h2>Organização</h2><p>Ferramentas para manutenção da biblioteca.</p></div></div>
+    <div class="library-maintenance-actions"><a class="btn ghost full" href="{{url_for('web.library',duplicates=1)}}">Detectar duplicados</a><form action="{{url_for('pro.watch_folder_scan')}}" method="post"><button class="btn ghost full">Escanear watch folder</button></form></div>
+  </section>
+</div>
+
+<div class="library-toolbar panel">
+  <div class="library-search"><span>⌕</span><input type="search" id="librarySearch" placeholder="Buscar por nome, codec ou resolução..."></div>
+  <div class="library-filter" id="libraryFilter"><button class="filter-chip active" type="button" data-filter="all">Todos <b>{{items|length}}</b></button><button class="filter-chip" type="button" data-filter="video">Vídeos</button><button class="filter-chip" type="button" data-filter="audio">Áudios</button></div>
+  {% if duplicates_scanned %}<span class="scan-done">✓ Hash/duplicados analisados</span>{% endif %}
+</div>
+
+<div class="library-grid" id="libraryGrid">
+{% for m in items %}
+  <article class="media-card" data-library-kind="{{m.kind}}" data-library-search="{{(m.filename ~ ' ' ~ m.codec ~ ' ' ~ m.width ~ 'x' ~ m.height)|lower}}">
+    <div class="media-preview">
+      {% if m.kind=='video' %}<video preload="metadata" muted controls playsinline src="{{url_for('web.library_file',kind=m.kind,filename=m.filename)}}"></video>{% else %}<div class="audio-icon"><span>♫</span><strong>Áudio</strong></div>{% endif %}
+      <span class="media-type-badge">{{m.kind|upper}}</span>
+      {% if dupes.get(m.filename) %}<span class="duplicate-badge">DUPLICADO</span>{% endif %}
+    </div>
+    <div class="media-body">
+      <h3 title="{{m.filename}}">{{m.filename}}</h3>
+      {% if m.error %}<div class="media-error">⚠ {{m.error}}</div>{% endif %}
+      {% if dupes.get(m.filename) %}<div class="duplicate-note">Mesmo conteúdo de: {{dupes[m.filename]|join(', ')}}</div>{% endif %}
+      <div class="media-meta-grid">
+        <span><b>⏱</b><small>Duração</small><strong>{{m.duration_seconds|duration_hms}}</strong></span>
+        <span><b>▣</b><small>Resolução</small><strong>{% if m.width %}{{m.width}}×{{m.height}}{% else %}—{% endif %}</strong></span>
+        <span><b>◫</b><small>Tamanho</small><strong>{{m.size_bytes|filesize}}</strong></span>
+        <span><b>◈</b><small>Codec</small><strong>{{m.codec or '—'}}{% if m.fps %} · {{m.fps}}fps{% endif %}</strong></span>
+      </div>
+      <div class="media-usage">Usado em <strong>{{m.usage_count}}</strong> configuração(ões)/agenda(s)</div>
+      <div class="card-actions media-actions"><a class="btn ghost" href="{{url_for('web.library_file',kind=m.kind,filename=m.filename)}}" target="_blank" rel="noopener">Abrir</a><button class="btn ghost media-hash" data-kind="{{m.kind}}" data-file="{{m.filename}}">SHA-256</button><form action="{{url_for('web.library_delete',kind=m.kind,filename=m.filename)}}" method="post" onsubmit="return confirm('Excluir este arquivo?')"><button class="btn danger">Excluir</button></form></div>
+    </div>
+  </article>
+{% else %}<div class="empty-state panel">Biblioteca vazia. Envie um arquivo ou importe uma URL.</div>{% endfor %}
+</div>
+<div class="empty-state panel library-no-results" id="libraryNoResults" hidden>Nenhum arquivo corresponde ao filtro atual.</div>
+{% endblock %}

@@ -1,11 +1,22 @@
 {% extends 'base.html' %}
 {% block title %}Agendamentos • HostStorm{% endblock %}
 {% block heading %}Agendamentos{% endblock %}
-{% block subheading %}Calendário semanal, agendas únicas, playlists e regras de conflito.{% endblock %}
+{% block subheading %}Calendário semanal com arquivos locais ou fontes por URL/YouTube.{% endblock %}
 {% block content %}
 <div class="page-actions"><a class="btn primary" href="{{ url_for('web.schedule_new') }}">+ Novo agendamento</a></div>
 <div class="week-calendar">
-{% for day in weekday_labels %}<section class="calendar-day"><header><strong>{{ day }}</strong><span>{{ days[loop.index0]|length }}</span></header><div class="calendar-items">{% for s in days[loop.index0] %}<a href="{{ url_for('web.schedule_edit',sid=s.id) }}" class="calendar-event {% if not s.enabled %}disabled{% endif %}"><time>{{ s.time }}</time><strong>{{ (channels.get(s.channel_id) or {}).get('name','Canal') }}</strong><small>{{ s.name or s.media|join(' → ') }}</small><div class="platform-line">{% for p in s.platforms %}<span class="platform-chip">{{ p }}</span>{% endfor %}</div></a>{% else %}<div class="calendar-empty">—</div>{% endfor %}</div></section>{% endfor %}
+{% for day in weekday_labels %}
+<section class="calendar-day"><header><strong>{{ day }}</strong><span>{{ days[loop.index0]|length }}</span></header><div class="calendar-items">
+{% for s in days[loop.index0] %}
+<a href="{{ url_for('web.schedule_edit',sid=s.id) }}" class="calendar-event {% if not s.enabled %}disabled{% endif %}">
+  <div class="calendar-event-top"><time>{{ s.time }}</time><span class="source-mini {{'remote' if s.source_mode=='url' else 'local'}}">{{'URL' if s.source_mode=='url' else 'LOCAL'}}</span></div>
+  <strong>{{ (channels.get(s.channel_id) or {}).get('name','Canal') }}</strong>
+  <small>{% if s.source_mode=='url' %}{{ s.name or s.source_title or s.source_url }}{% else %}{{ s.name or s.media|join(' → ') }}{% endif %}</small>
+  {% if s.source_mode=='url' and s.source_duration_seconds %}<small>⏱ {{ s.source_duration_seconds|duration_hms }} · encerra {{s.stop_before_seconds}}s antes</small>{% endif %}
+  <div class="platform-line">{% for p in s.platforms %}<span class="platform-chip">{{ p }}</span>{% endfor %}</div>
+</a>
+{% else %}<div class="calendar-empty">—</div>{% endfor %}
+</div></section>{% endfor %}
 </div>
-{% if special %}<div class="panel"><div class="panel-head"><div><h2>Datas únicas</h2><p>Transmissões que não fazem parte da recorrência semanal.</p></div></div><div class="schedule-table">{% for s in special %}<a href="{{ url_for('web.schedule_edit',sid=s.id) }}"><span>{{ s.run_date }} {{ s.time }}</span><strong>{{ (channels.get(s.channel_id) or {}).get('name','Canal') }}</strong><small>{{ s.media|join(' → ') }}</small></a>{% endfor %}</div></div>{% endif %}
+{% if special %}<div class="panel"><div class="panel-head"><div><h2>Datas únicas</h2><p>Transmissões fora da recorrência semanal.</p></div></div><div class="schedule-table">{% for s in special %}<a href="{{ url_for('web.schedule_edit',sid=s.id) }}"><span>{{ s.run_date }} {{ s.time }}</span><strong>{{ (channels.get(s.channel_id) or {}).get('name','Canal') }}</strong><small>{% if s.source_mode=='url' %}↗ {{s.source_title or s.source_url}}{% else %}{{ s.media|join(' → ') }}{% endif %}</small></a>{% endfor %}</div></div>{% endif %}
 {% endblock %}
