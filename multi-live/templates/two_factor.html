@@ -1,1 +1,43 @@
-{% extends 'base.html' %}{% block title %}2FA • HostStorm{% endblock %}{% block heading %}Autenticação em duas etapas{% endblock %}{% block subheading %}Proteja sua conta com TOTP em Authenticator, Aegis, 1Password ou equivalente.{% endblock %}{% block content %}<div class="dashboard-grid"><section class="panel"><div class="panel-head"><div><h2>Status</h2></div></div><div class="hero-status {{'good' if user.totp_enabled else 'warn'}}"><strong>{{'2FA ATIVO' if user.totp_enabled else '2FA DESATIVADO'}}</strong><p>{{user.username}}</p></div>{% if user.totp_enabled %}<form method="post"><input type="hidden" name="action" value="disable"><label>Confirme sua senha<input type="password" name="password" required></label><button class="btn danger">Desativar 2FA</button></form>{% else %}<form method="post"><input type="hidden" name="action" value="begin"><button class="btn primary">Gerar chave 2FA</button></form>{% endif %}</section>{% if secret %}<section class="panel span-2"><div class="panel-head"><div><h2>Ativar 2FA</h2><p>Escaneie o QR e confirme com o código de 6 dígitos.</p></div></div><div class="twofa-grid">{% if qr %}<img class="qr" src="{{qr}}" alt="QR TOTP">{% endif %}<div><label>Chave manual<input value="{{secret}}" readonly onclick="this.select()"></label><details><summary>URI técnica</summary><code class="wrap-code">{{uri}}</code></details><form method="post"><input type="hidden" name="action" value="enable"><label>Código do aplicativo<input name="code" inputmode="numeric" maxlength="6" required></label><button class="btn success">Confirmar e ativar</button></form></div></div></section>{% endif %}</div>{% endblock %}
+{% extends 'base.html' %}
+{% block title %}2FA & Passkeys • HostStorm{% endblock %}
+{% block heading %}Segurança da conta{% endblock %}
+{% block subheading %}Use TOTP, Passkeys/WebAuthn ou os dois. Passkey permite login sem senha com biometria, PIN ou chave física.{% endblock %}
+{% block content %}
+<div class="security-grid">
+  <section class="panel">
+    <div class="panel-head"><div><h2>Authenticator / TOTP</h2><p>Aegis, 1Password, Google Authenticator ou equivalente.</p></div></div>
+    <div class="hero-status {{'good' if user.totp_enabled else 'warn'}}"><strong>{{'TOTP ATIVO' if user.totp_enabled else 'TOTP DESATIVADO'}}</strong><p>{{user.username}}</p></div>
+    {% if user.totp_enabled %}<form method="post"><input type="hidden" name="action" value="disable"><label>Confirme sua senha<input type="password" name="password" required></label><button class="btn danger">Desativar TOTP</button></form>{% else %}<form method="post"><input type="hidden" name="action" value="begin"><button class="btn primary">Gerar chave TOTP</button></form>{% endif %}
+  </section>
+
+  <section class="panel passkey-panel">
+    <div class="panel-head"><div><h2>Passkeys</h2><p>Windows Hello, Android, iPhone, Touch ID e chaves FIDO2. Exige HTTPS.</p></div><span class="status-pill {{'running' if current_passkeys else 'offline'}}">{{current_passkeys|length}} CADASTRADA(S)</span></div>
+    <div class="passkey-register-box">
+      <label>Nome desta Passkey<input id="passkeyName" placeholder="Ex.: PC principal, Galaxy, YubiKey"></label>
+      <label>Confirme sua senha atual<input id="passkeyPassword" type="password" autocomplete="current-password"></label>
+      <button class="btn passkey-button full" type="button" id="registerPasskey">🔐 Cadastrar nova Passkey</button>
+      <div class="passkey-login-status" id="passkeyRegisterStatus"></div>
+    </div>
+    <div class="passkey-list">
+      {% for p in current_passkeys %}
+        <article class="passkey-card"><div><strong>🔑 {{p.name}}</strong><small>Criada: {{p.created_at|datetime_br}}{% if p.last_used_at %} • Último uso: {{p.last_used_at|datetime_br}}{% endif %}</small><small>{{p.device_type or 'FIDO2/WebAuthn'}}{% if p.backed_up %} • sincronizada/backup{% endif %}</small></div><form method="post" action="{{url_for('passkey.passkey_delete',pid=p.id)}}" onsubmit="return confirm('Remover esta Passkey?')"><input type="password" name="password" required placeholder="Senha para remover"><button class="btn danger">Remover</button></form></article>
+      {% else %}
+        <div class="empty-state compact">Nenhuma Passkey cadastrada. Você continua podendo entrar com senha + TOTP.</div>
+      {% endfor %}
+    </div>
+    <p class="field-note">Uma Passkey com verificação do usuário substitui senha + código no login. TOTP continua disponível como método alternativo.</p>
+  </section>
+
+  {% if secret %}<section class="panel span-all"><div class="panel-head"><div><h2>Ativar TOTP</h2><p>Escaneie o QR e confirme com o código de 6 dígitos.</p></div></div><div class="twofa-grid">{% if qr %}<img class="qr" src="{{qr}}" alt="QR TOTP">{% endif %}<div><label>Chave manual<input value="{{secret}}" readonly onclick="this.select()"></label><details><summary>URI técnica</summary><code class="wrap-code">{{uri}}</code></details><form method="post"><input type="hidden" name="action" value="enable"><label>Código do aplicativo<input name="code" inputmode="numeric" maxlength="6" required></label><button class="btn success">Confirmar e ativar</button></form></div></div></section>{% endif %}
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const pkB64Buf=s=>{s=s.replace(/-/g,'+').replace(/_/g,'/');while(s.length%4)s+='=';return Uint8Array.from(atob(s),c=>c.charCodeAt(0)).buffer};
+const pkBuf64=b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+const regOpts=o=>{o.challenge=pkB64Buf(o.challenge);o.user.id=pkB64Buf(o.user.id);if(o.excludeCredentials)o.excludeCredentials=o.excludeCredentials.map(x=>({...x,id:pkB64Buf(x.id)}));return o};
+const regCred=c=>({id:c.id,rawId:pkBuf64(c.rawId),type:c.type,authenticatorAttachment:c.authenticatorAttachment,clientExtensionResults:c.getClientExtensionResults(),response:{attestationObject:pkBuf64(c.response.attestationObject),clientDataJSON:pkBuf64(c.response.clientDataJSON),transports:c.response.getTransports?c.response.getTransports():[]}});
+const reg=document.getElementById('registerPasskey');
+if(reg) reg.onclick=async()=>{const status=document.getElementById('passkeyRegisterStatus'),password=document.getElementById('passkeyPassword').value,name=document.getElementById('passkeyName').value||'Passkey';if(!window.PublicKeyCredential){status.textContent='Este navegador não oferece WebAuthn/Passkey.';return}if(!password){status.textContent='Confirme sua senha atual.';return}reg.disabled=true;status.textContent='Aguardando o dispositivo...';try{let r=await fetch('/api/passkeys/register/options',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,password})}),j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Falha ao iniciar cadastro');const cred=await navigator.credentials.create({publicKey:regOpts(j.publicKey)});r=await fetch('/api/passkeys/register/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({credential:regCred(cred)})});j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Passkey recusada');status.textContent='Passkey cadastrada com sucesso.';setTimeout(()=>location.reload(),500);}catch(e){status.textContent=e.message||String(e)}finally{reg.disabled=false}};
+</script>
+{% endblock %}
