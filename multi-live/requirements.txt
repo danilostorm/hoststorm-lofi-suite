@@ -7,3 +7,4 @@ cryptography>=49.0.0,<50.0.0
 qrcode[pil]==8.2
 pywebpush>=2.0.0,<3.0
 webauthn==3.0.0
+websocket-client>=1.8.0,<2.0
