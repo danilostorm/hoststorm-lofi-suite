@@ -11,10 +11,15 @@ from .security import LOGIN_LIMITER, new_totp_secret, role_allows, totp_uri, ver
 auth_bp=Blueprint('auth',__name__)
 
 PUBLIC_ENDPOINTS={'auth.login','web.healthz','static'}
+PUBLIC_WEBHOOK_PATHS={'/api/ai/kick/webhook','/api/kick/webhook'}
 
 @auth_bp.before_app_request
 def load_identity():
     if request.path.startswith('/static/') or request.endpoint in PUBLIC_ENDPOINTS:
+        return None
+    # Webhooks da plataforma precisam chegar sem cookie de sessão. A rota do AI Host valida
+    # criptograficamente a assinatura oficial antes de aceitar qualquer payload.
+    if request.method=='POST' and request.path in PUBLIC_WEBHOOK_PATHS:
         return None
     uid=session.get('uid')
     user=get_user(uid) if uid else None
