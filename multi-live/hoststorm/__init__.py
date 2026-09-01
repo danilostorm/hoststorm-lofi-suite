@@ -15,6 +15,8 @@ def create_app():
     from .overlay_pro import install_advanced_overlays
     from .passkeys import install_passkey_auth, list_passkeys, passkey_bp
     from .broadcast_automation import automation_bp, install_broadcast_automation
+    from .ai_db import init_ai_db
+    from .ai_voice import install_ai_voice
 
     app = Flask(__name__, template_folder='../templates', static_folder='../static')
     app.secret_key = os.environ.get('HOSTSTORM_SECRET_KEY') or os.environ.get('LV2_ADMIN_PASSWORD') or os.urandom(32)
@@ -29,6 +31,7 @@ def create_app():
     db_module.init_db()
     init_pro_db(ADMIN_USER, ADMIN_PASSWORD)
     init_push_db()
+    init_ai_db()
     install_secure_compat(db_module, legacy_web, streaming_module)
 
     # v3.1: fontes remotas entram antes dos wrappers profissionais/distribuídos.
@@ -40,6 +43,8 @@ def create_app():
 
     install_professional_streaming(streaming_module.MANAGER, streaming_module)
     install_advanced_overlays(streaming_module.MANAGER)
+    # v4: o barramento TTS entra depois dos overlays/profiles para injetar áudio no comando FFmpeg final.
+    install_ai_voice(streaming_module.MANAGER, streaming_module)
 
     # Distributed wrapper fica dentro da automação de metadados: o Controller altera título/categoria
     # antes de delegar a execução a um nó remoto.
@@ -65,6 +70,8 @@ def create_app():
 
     from .pro_web import pro_bp
     from .ops_web import ops_bp
+    from .ai_web import ai_bp
+    from .ai_compat import compat_bp
 
     @app.context_processor
     def passkey_context():
@@ -81,6 +88,8 @@ def create_app():
     app.register_blueprint(ops_bp)
     app.register_blueprint(urlmedia_bp)
     app.register_blueprint(automation_bp)
+    app.register_blueprint(ai_bp)
+    app.register_blueprint(compat_bp)
 
     streaming_module.MANAGER.start_threads()
     SCHEDULER = scheduler_module.SCHEDULER
@@ -89,4 +98,6 @@ def create_app():
     BROADCAST.start(streaming_module.MANAGER)
     from .services import SERVICES
     SERVICES.start()
+    from .ai_host import AI_HOST
+    AI_HOST.start(streaming_module.MANAGER)
     return app
