@@ -1,3 +1,34 @@
+# 4.0.0
+
+HostStorm Multi Live Manager 4.0 — AI Live Host.
+
+## AI Live Host
+- chat unificado para Kick, Twitch e YouTube, com bindings por conta/canal;
+- ingestão de chat por webhook/polling conforme a plataforma e normalização em um formato único;
+- buffer variável de 15–30 segundos, ranking de mensagens, probabilidades e limites por hora para evitar comportamento robótico;
+- Copilot e Autopilot, com fila de sugestões, aprovação manual, edição, envio e histórico;
+- persona configurável, humanizer, respostas de tamanhos variados, emojis e perguntas de volta;
+- memória de live, memória curta por viewer e contexto opcional compartilhado entre plataformas;
+- cooldown global e por viewer, anti-loop, deduplicação e proteção contra prompt injection/spam/links;
+- eventos de follow/sub/gifts/KICKs quando disponíveis pelas integrações oficiais;
+- contexto automático da transmissão atual para o LLM;
+- providers LLM configuráveis: OpenAI Responses, endpoints OpenAI-compatible, Ollama, webhook e fallback local de teste;
+- AI Vision opcional por snapshots periódicos da transmissão, sem análise contínua de vídeo;
+- TTS configurável com providers cloud/local/webhook;
+- barramento de voz por transmissão com FFmpeg, mixagem e ducking automático do áudio principal;
+- métricas, histórico, viewers/memória, regras, personas e providers em uma nova área AI HOST do painel.
+
+## Kick / permissões
+- OAuth Kick passa a solicitar também `chat:write`, `events:subscribe` e `kicks:read` além dos scopes anteriores;
+- tokens continuam criptografados e o refresh automático permanece compatível;
+- webhook existente pode continuar sendo utilizado para os eventos do AI Host.
+
+## Segurança / operação
+- conteúdo recebido do chat é tratado como dado não confiável e nunca como instrução privilegiada;
+- segredos, stream keys, tokens OAuth e `security.key` não entram no contexto enviado ao modelo;
+- assinatura visual configurável (`🤖` por padrão) identifica mensagens automatizadas;
+- recursos AI ficam desacoplados do pipeline de transmissão e podem ser desligados sem afetar lives normais.
+
 # 3.3.0
 
 HostStorm Multi Live Manager 3.3 — Kick OAuth & Schedule Timing.
