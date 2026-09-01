@@ -2,7 +2,7 @@ name: HostStorm CI
 
 on:
   push:
-    branches: [main, beta, v2-manager, v3-professional]
+    branches: [main, beta, v2-manager, v3-professional, v4-ai-live-host]
   pull_request:
     branches: [main]
 
