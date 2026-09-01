@@ -18,7 +18,10 @@ def test_kick_pkce_authorize_url():
     assert query['response_type'] == ['code']
     assert query['code_challenge_method'] == ['S256']
     assert query['redirect_uri'] == ['https://host.example/api/kick/oauth/callback']
-    assert set(query['scope'][0].split()) == {'user:read', 'channel:read', 'channel:write'}
+    assert set(query['scope'][0].split()) == {
+        'user:read', 'channel:read', 'channel:write',
+        'chat:write', 'events:subscribe', 'kicks:read',
+    }
 
 
 def test_normalize_kick_token_payload(monkeypatch):
