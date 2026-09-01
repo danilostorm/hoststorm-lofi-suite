@@ -12,7 +12,8 @@ import urllib.request
 KICK_AUTHORIZE_URL = 'https://id.kick.com/oauth/authorize'
 KICK_TOKEN_URL = 'https://id.kick.com/oauth/token'
 KICK_API_BASE = 'https://api.kick.com'
-KICK_SCOPES = ('user:read', 'channel:read', 'channel:write')
+# channel:* mantém a automação 3.x; chat/events alimentam o AI Live Host.
+KICK_SCOPES = ('user:read', 'channel:read', 'channel:write', 'chat:write', 'events:subscribe', 'kicks:read')
 
 
 def new_pkce():
