@@ -1,3 +1,14 @@
+# 4.0.1
+
+HostStorm Multi Live Manager 4.0.1 — compatibilidade de providers AI.
+
+## Corrigido
+- respostas de gateways OpenAI-compatible agora são normalizadas para o contrato interno do AI Live Host mesmo quando o modelo roteado usa aliases como `mensagem`, `message`, `text`, `response`, `answer`, `content`, `output`, `result` ou `resposta` em vez de `reply`;
+- `voice`, `memory_facts` e `reason` recebem defaults seguros quando o provider retorna apenas texto/resposta;
+- driver Chat Completions reforça o contrato JSON solicitado ao modelo;
+- teste do provider mostra também o modelo efetivamente roteado quando o gateway informa `_routed_via`/`model`;
+- testes automatizados cobrem aliases e resultados JSON aninhados, incluindo o comportamento observado com FreeLLMAPI em `model:auto`.
+
 # 4.0.0
 
 HostStorm Multi Live Manager 4.0 — AI Live Host.
