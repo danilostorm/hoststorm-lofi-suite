@@ -1,6 +1,6 @@
 import random
 
-from hoststorm.ai_providers import complete
+from hoststorm.ai_providers import _strip_json, complete
 from hoststorm.ai_safety import classify_message, humanizer_directive, safe_output, score_message
 from hoststorm.ai_voice import _voice_filter
 from hoststorm.kick_oauth import KICK_SCOPES
@@ -37,6 +37,18 @@ def test_builtin_provider_can_exercise_pipeline_without_external_api():
     result=complete('', 'sistema', 'MENSAGEM ESCOLHIDA: viewer: qual jogo é esse?')
     assert result['reply']
     assert 'memory_facts' in result
+
+
+def test_openai_compatible_reply_alias_is_normalized():
+    result=_strip_json('{"mensagem":"teste do HostStorm"}')
+    assert result['reply']=='teste do HostStorm'
+    assert result['voice']=='teste do HostStorm'
+    assert result['memory_facts']==[]
+
+
+def test_nested_provider_result_is_normalized():
+    result=_strip_json('{"result":{"message":"HostStorm funcionando"}}')
+    assert result['reply']=='HostStorm funcionando'
 
 
 def test_kick_oauth_requests_ai_host_scopes():
