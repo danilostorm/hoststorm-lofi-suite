@@ -52,6 +52,55 @@ def _join(base, suffix):
     return str(base or '').rstrip('/') + '/' + str(suffix or '').lstrip('/')
 
 
+_REPLY_ALIASES = (
+    'reply', 'mensagem', 'message', 'text', 'response', 'answer', 'content',
+    'output', 'result', 'resposta',
+)
+
+
+def _normalize_result(value, fallback_text=''):
+    """Normalize heterogeneous LLM JSON into the AI Live Host contract.
+
+    OpenAI-compatible routers may select providers that honor JSON mode but do
+    not preserve our preferred field names. The engine should tolerate common
+    aliases while always exposing reply/voice/memory_facts/reason internally.
+    """
+    if not isinstance(value, dict):
+        value = {'reply': '' if value is None else str(value)}
+    result = dict(value)
+    reply = result.get('reply')
+    if not isinstance(reply, str) or not reply.strip():
+        reply = ''
+        for key in _REPLY_ALIASES[1:]:
+            candidate = result.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                reply = candidate.strip()
+                break
+            if isinstance(candidate, dict):
+                nested = _normalize_result(candidate)
+                if nested.get('reply'):
+                    reply = nested['reply']
+                    break
+    if not reply and fallback_text:
+        reply = str(fallback_text).strip()
+    result['reply'] = str(reply or '').strip()
+
+    voice = result.get('voice')
+    if not isinstance(voice, str) or not voice.strip():
+        result['voice'] = result['reply']
+    else:
+        result['voice'] = voice.strip()
+
+    memory = result.get('memory_facts')
+    if not isinstance(memory, list):
+        memory = []
+    result['memory_facts'] = [str(x).strip() for x in memory if str(x).strip()][:4]
+
+    reason = result.get('reason')
+    result['reason'] = str(reason).strip() if reason not in (None, '') else 'provider compatibility normalization'
+    return result
+
+
 def _strip_json(text):
     text = str(text or '').strip()
     if text.startswith('```'):
@@ -60,13 +109,14 @@ def _strip_json(text):
         if lines and lines[-1].strip() == '```': lines = lines[:-1]
         text = '\n'.join(lines).strip()
     start = text.find('{'); end = text.rfind('}')
+    json_text = text
     if start >= 0 and end > start:
-        text = text[start:end+1]
+        json_text = text[start:end+1]
     try:
-        value = json.loads(text)
-        return value if isinstance(value, dict) else {'reply': str(value)}
+        value = json.loads(json_text)
+        return _normalize_result(value)
     except Exception:
-        return {'reply': text}
+        return _normalize_result({'reply': text})
 
 
 def _responses_output_text(data):
@@ -124,9 +174,13 @@ def _openai_chat(config, system_text, user_text, image_bytes=None, image_mime='i
             {'type': 'text', 'text': user_text},
             {'type': 'image_url', 'image_url': {'url': f'data:{image_mime};base64,' + base64.b64encode(image_bytes).decode('ascii')}},
         ]
+    json_contract = (
+        '\n\nFORMATO OBRIGATÓRIO: retorne somente um objeto JSON com as chaves '
+        'reply (string), voice (string), memory_facts (array de strings) e reason (string).'
+    )
     payload = {
         'model': model,
-        'messages': [{'role': 'system', 'content': system_text}, {'role': 'user', 'content': content}],
+        'messages': [{'role': 'system', 'content': system_text + json_contract}, {'role': 'user', 'content': content}],
         'response_format': {'type': 'json_object'},
         'temperature': float(config.get('temperature') or .75),
     }
@@ -135,7 +189,10 @@ def _openai_chat(config, system_text, user_text, image_bytes=None, image_mime='i
     if not choices:
         raise RuntimeError('Provider não retornou nenhuma resposta.')
     text = ((choices[0].get('message') or {}).get('content') or '')
-    return _strip_json(text)
+    result = _strip_json(text)
+    result['_raw_id'] = data.get('id', '')
+    result['_routed_model'] = str((data.get('_routed_via') or {}).get('model') or data.get('model') or '')
+    return result
 
 
 def _ollama(config, system_text, user_text, image_bytes=None, image_mime='image/jpeg'):
@@ -157,8 +214,8 @@ def _webhook(config, system_text, user_text, image_bytes=None, image_mime='image
     if image_bytes:
         payload['image_base64'] = base64.b64encode(image_bytes).decode('ascii'); payload['image_mime'] = image_mime
     data = _json_request(endpoint, payload, _auth_headers(config), timeout=int(config.get('timeout') or 60))
-    if isinstance(data.get('result'), dict): return data['result']
-    if isinstance(data.get('reply'), str): return data
+    if isinstance(data.get('result'), dict): return _normalize_result(data['result'])
+    if isinstance(data.get('reply'), str): return _normalize_result(data)
     return _strip_json(data.get('text') or json.dumps(data, ensure_ascii=False))
 
 
@@ -262,7 +319,14 @@ def test_provider(pid):
         if p.get('kind') == 'tts':
             pcm = synthesize(pid, 'Teste de voz do HostStorm AI Live Host.')
             return {'ok': bool(pcm), 'message': f'TTS respondeu com {len(pcm)} bytes PCM.'}
-        r = complete(pid, 'Responda JSON curto.', 'MENSAGEM ESCOLHIDA: teste do HostStorm')
-        return {'ok': bool(r.get('reply')), 'message': 'LLM respondeu: ' + str(r.get('reply') or '')[:180]}
+        r = complete(
+            pid,
+            'Retorne somente JSON com reply, voice, memory_facts e reason.',
+            'MENSAGEM ESCOLHIDA: teste do HostStorm',
+        )
+        reply = str(r.get('reply') or '').strip()
+        routed = str(r.get('_routed_model') or '').strip()
+        suffix = f' · modelo: {routed}' if routed else ''
+        return {'ok': bool(reply), 'message': 'LLM respondeu: ' + reply[:180] + suffix}
     except Exception as exc:
         return {'ok': False, 'message': str(exc)}
