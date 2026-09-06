@@ -1,3 +1,17 @@
+# 4.0.2
+
+HostStorm Multi Live Manager 4.0.2 — robustez de fontes remotas/YouTube.
+
+## Corrigido
+- agendamentos por URL deixam de depender exclusivamente de um formato progressivo já muxado do YouTube;
+- resolução com yt-dlp tenta primeiro A/V único até 1080p e faz fallback para vídeo-only + áudio-only quando necessário;
+- FFmpeg recebe os dois inputs separados e mapeia corretamente vídeo e áudio;
+- áudio externo configurado no canal continua tendo prioridade quando existe;
+- URLs assinadas resolvidas ficam em cache curto e são atualizadas durante recovery de lives longas;
+- falhas ao preparar a fonte deixam de escapar como HTTP 500 no botão `Executar agora`;
+- o scheduler passa a registrar uma falha de resolução como uma tentativa concluída, evitando repetir o mesmo erro a cada ciclo de ~10 segundos;
+- testes automatizados cobrem o fallback A/V separado e o mapeamento de áudio.
+
 # 4.0.1
 
 HostStorm Multi Live Manager 4.0.1 — compatibilidade de providers AI.
@@ -117,6 +131,3 @@ HostStorm Multi Live Manager 3.0 Professional.
 - operação multi-servidor com balanceamento, failover e sincronização de mídia;
 - backups/restore e atualização STABLE/BETA por agente seguro no host;
 - CI com testes, validação dos scripts, Docker build e smoke test de health.
-
-## Compatibilidade
-A migração da versão 2 continua preservada. Os diretórios persistentes `data/`, `media/`, `logs/` e o `.env` permanecem fora do Git.
