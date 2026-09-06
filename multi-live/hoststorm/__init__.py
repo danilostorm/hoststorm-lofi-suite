@@ -19,6 +19,7 @@ def create_app():
     from .ai_db import init_ai_db
     from .ai_voice import install_ai_voice
     from .recovery import install_recovery_engine
+    from .recovery_retry import install_recovery_retry
 
     app = Flask(__name__, template_folder='../templates', static_folder='../static')
     app.secret_key = os.environ.get('HOSTSTORM_SECRET_KEY') or os.environ.get('LV2_ADMIN_PASSWORD') or os.urandom(32)
@@ -59,6 +60,8 @@ def create_app():
     # v4.0.3: recovery é instalado por último no pipeline de streaming para enxergar o comando final,
     # persistir checkpoints e aplicar seek também quando o start passa por automação/distribuição.
     install_recovery_engine(streaming_module.MANAGER, streaming_module, db_module)
+    # Se o servidor voltar antes da Internet, continue tentando o checkpoint com backoff até reconectar.
+    install_recovery_retry(streaming_module.MANAGER, streaming_module, db_module)
 
     # Compatibilidade do módulo web profissional: list_backups pertence a professional.py.
     from . import pro_db as pro_db_module
