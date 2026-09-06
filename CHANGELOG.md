@@ -1,3 +1,33 @@
+# 4.0.3
+
+HostStorm Multi Live Manager 4.0.3 — Live Recovery Engine e qualidade máxima de fonte.
+
+## Recovery / continuidade
+- lives passam a persistir checkpoints de reprodução no SQLite durante a transmissão;
+- queda de internet, encerramento inesperado do FFmpeg ou reinício do container/servidor pode retomar a mídia a partir do último ponto salvo em vez de começar do zero;
+- checkpoints guardam canal, sessão, fonte, plataformas, mídia, agendamento, posição, duração, qualidade e contagem de recoveries;
+- fontes locais em loop retomam no ponto equivalente dentro do arquivo/playlist, preservando também o tempo total já exibido;
+- agendamentos URL e Biblioteca são reconstruídos após restart quando ainda possuem conteúdo restante;
+- parada manual/fim normal desabilita a retomada daquele checkpoint para não ressuscitar uma live encerrada intencionalmente;
+- checkpoints abandonados expiram por segurança, configurável por `HOSTSTORM_RECOVERY_MAX_AGE_HOURS`;
+- intervalo de checkpoint configurável por `HOSTSTORM_RECOVERY_CHECKPOINT_SECONDS` (padrão 5s);
+- status runtime passa a expor posição recuperável, qualidade da fonte, número de recoveries e último motivo.
+
+## Rede / FFmpeg
+- inputs HTTP recebem opções de reconexão do FFmpeg (`reconnect`, `reconnect_streamed`, `reconnect_delay_max`);
+- recovery de plataforma força nova resolução de URLs assinadas do YouTube/DASH antes de reiniciar o encoder;
+- seek de retomada é aplicado somente aos inputs da fonte, sem deslocar áudio externo configurado no canal;
+- backoff existente do supervisor continua em 5/15/30/60s e agora trabalha em conjunto com o checkpoint persistente.
+
+## Qualidade de fonte
+- removido o teto artificial de 1080p da resolução yt-dlp;
+- fontes URL passam a priorizar `bv*+ba/b`, pegando o melhor vídeo e o melhor áudio disponíveis antes dos fallbacks compatíveis;
+- continua suportado vídeo/áudio separados quando o YouTube não oferece formato progressivo muxado;
+- a qualidade da fonte fica registrada como máxima automática; o perfil de saída ainda pode redimensionar/transcodificar para a resolução configurada da plataforma.
+
+## Testes
+- testes automatizados cobrem persistência de checkpoint, stop sem auto-resume, cálculo de tempo restante, seek/reconnect HTTP, loop local e seleção yt-dlp sem limite de 1080p.
+
 # 4.0.2
 
 HostStorm Multi Live Manager 4.0.2 — robustez de fontes remotas/YouTube.
