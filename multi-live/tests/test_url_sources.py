@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 import hoststorm.db as db
+import hoststorm.url_resilience as url_resilience
 import hoststorm.url_sources as url_sources
 
 
@@ -77,3 +78,51 @@ def test_youtube_preview_is_privacy_embed():
 def test_private_source_urls_are_blocked():
     with pytest.raises(ValueError, match='privada|local'):
         url_sources.validate_remote_url('http://127.0.0.1/video.mp4')
+
+
+def test_resolver_falls_back_to_separate_video_audio(monkeypatch):
+    monkeypatch.setattr(url_sources, 'validate_remote_url', lambda value: value)
+    monkeypatch.setattr(url_sources, '_is_direct_media_url', lambda value: False)
+    monkeypatch.setattr(url_sources, '_yt_base_args', lambda: ['yt-dlp'])
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        selector = cmd[cmd.index('-f') + 1]
+        if selector.startswith('b[') or selector.startswith('best['):
+            return SimpleNamespace(returncode=1, stdout='', stderr='Requested format is not available')
+        return SimpleNamespace(
+            returncode=0,
+            stdout='https://video.example/videoplayback\nhttps://audio.example/videoplayback\n',
+            stderr='',
+        )
+
+    monkeypatch.setattr(url_resilience.subprocess, 'run', fake_run)
+    result = url_resilience.resolve_remote_inputs('https://www.youtube.com/watch?v=abc123xyz00')
+    assert result['split_av'] is True
+    assert result['inputs'] == [
+        'https://video.example/videoplayback',
+        'https://audio.example/videoplayback',
+    ]
+    assert len(calls) >= 3
+
+
+def test_split_source_audio_map_uses_ytdlp_audio_input():
+    cmd = [
+        'ffmpeg', '-re', '-i', 'video-url', '-re', '-i', 'audio-url',
+        '-map', '0:v:0', '-map', '0:a?', '-c:v', 'libx264', '-f', 'flv', 'rtmp://target',
+    ]
+    fixed = url_resilience._replace_audio_map(cmd, 2)
+    audio_map_index = fixed.index('-map', fixed.index('-map') + 1) + 1
+    assert fixed[audio_map_index] == '1:a:0'
+
+
+def test_split_source_external_audio_keeps_priority():
+    cmd = [
+        'ffmpeg', '-re', '-i', 'video-url', '-re', '-i', 'audio-url',
+        '-stream_loop', '-1', '-i', '/audio/music.mp3',
+        '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'libx264', '-f', 'flv', 'rtmp://target',
+    ]
+    fixed = url_resilience._replace_audio_map(cmd, 2)
+    audio_map_index = fixed.index('-map', fixed.index('-map') + 1) + 1
+    assert fixed[audio_map_index] == '2:a:0'
