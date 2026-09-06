@@ -18,6 +18,7 @@ def create_app():
     from .broadcast_automation import automation_bp, install_broadcast_automation
     from .ai_db import init_ai_db
     from .ai_voice import install_ai_voice
+    from .recovery import install_recovery_engine
 
     app = Flask(__name__, template_folder='../templates', static_folder='../static')
     app.secret_key = os.environ.get('HOSTSTORM_SECRET_KEY') or os.environ.get('LV2_ADMIN_PASSWORD') or os.urandom(32)
@@ -44,8 +45,7 @@ def create_app():
 
     install_professional_streaming(streaming_module.MANAGER, streaming_module)
     install_advanced_overlays(streaming_module.MANAGER)
-    # v4.0.2: depois dos wrappers profissionais, fontes URL ganham fallback A/V separado e
-    # erros de resolução passam a ser tratados sem derrubar o /schedules/<id>/run.
+    # v4.0.2+: resolução URL resiliente, qualidade máxima automática e fallback A/V separado.
     install_url_resilience(streaming_module.MANAGER, streaming_module)
     # v4: o barramento TTS entra depois dos overlays/profiles para injetar áudio no comando FFmpeg final.
     install_ai_voice(streaming_module.MANAGER, streaming_module)
@@ -55,6 +55,10 @@ def create_app():
     from .distributed import install_distributed
     install_distributed(streaming_module.MANAGER)
     install_broadcast_automation(app, db_module, legacy_web, scheduler_module, streaming_module.MANAGER)
+
+    # v4.0.3: recovery é instalado por último no pipeline de streaming para enxergar o comando final,
+    # persistir checkpoints e aplicar seek também quando o start passa por automação/distribuição.
+    install_recovery_engine(streaming_module.MANAGER, streaming_module, db_module)
 
     # Compatibilidade do módulo web profissional: list_backups pertence a professional.py.
     from . import pro_db as pro_db_module
