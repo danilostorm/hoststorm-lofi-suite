@@ -11,6 +11,7 @@ def create_app():
     from .push import init_push_db
     from .secure_compat import install_secure_compat
     from .url_sources import install_url_sources, urlmedia_bp
+    from .url_resilience import install_url_resilience
     from .pro_streaming import install_professional_streaming
     from .overlay_pro import install_advanced_overlays
     from .passkeys import install_passkey_auth, list_passkeys, passkey_bp
@@ -43,6 +44,9 @@ def create_app():
 
     install_professional_streaming(streaming_module.MANAGER, streaming_module)
     install_advanced_overlays(streaming_module.MANAGER)
+    # v4.0.2: depois dos wrappers profissionais, fontes URL ganham fallback A/V separado e
+    # erros de resolução passam a ser tratados sem derrubar o /schedules/<id>/run.
+    install_url_resilience(streaming_module.MANAGER, streaming_module)
     # v4: o barramento TTS entra depois dos overlays/profiles para injetar áudio no comando FFmpeg final.
     install_ai_voice(streaming_module.MANAGER, streaming_module)
 
