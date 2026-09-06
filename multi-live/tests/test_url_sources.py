@@ -80,7 +80,7 @@ def test_private_source_urls_are_blocked():
         url_sources.validate_remote_url('http://127.0.0.1/video.mp4')
 
 
-def test_resolver_falls_back_to_separate_video_audio(monkeypatch):
+def test_resolver_prefers_best_video_plus_audio_without_1080_cap(monkeypatch):
     monkeypatch.setattr(url_sources, 'validate_remote_url', lambda value: value)
     monkeypatch.setattr(url_sources, '_is_direct_media_url', lambda value: False)
     monkeypatch.setattr(url_sources, '_yt_base_args', lambda: ['yt-dlp'])
@@ -89,8 +89,7 @@ def test_resolver_falls_back_to_separate_video_audio(monkeypatch):
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
         selector = cmd[cmd.index('-f') + 1]
-        if selector.startswith('b[') or selector.startswith('best['):
-            return SimpleNamespace(returncode=1, stdout='', stderr='Requested format is not available')
+        assert '1080' not in selector
         return SimpleNamespace(
             returncode=0,
             stdout='https://video.example/videoplayback\nhttps://audio.example/videoplayback\n',
@@ -104,7 +103,29 @@ def test_resolver_falls_back_to_separate_video_audio(monkeypatch):
         'https://video.example/videoplayback',
         'https://audio.example/videoplayback',
     ]
-    assert len(calls) >= 3
+    assert result['selector'] == 'bv*+ba/b'
+    assert 'máxima' in result['quality']
+    assert len(calls) == 1
+
+
+def test_resolver_falls_back_when_best_selector_is_unavailable(monkeypatch):
+    monkeypatch.setattr(url_sources, 'validate_remote_url', lambda value: value)
+    monkeypatch.setattr(url_sources, '_is_direct_media_url', lambda value: False)
+    monkeypatch.setattr(url_sources, '_yt_base_args', lambda: ['yt-dlp'])
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        selector = cmd[cmd.index('-f') + 1]
+        calls.append(selector)
+        if len(calls) < 3:
+            return SimpleNamespace(returncode=1, stdout='', stderr='Requested format is not available')
+        return SimpleNamespace(returncode=0, stdout='https://muxed.example/video\n', stderr='')
+
+    monkeypatch.setattr(url_resilience.subprocess, 'run', fake_run)
+    result = url_resilience.resolve_remote_inputs('https://www.youtube.com/watch?v=abc123xyz00')
+    assert result['split_av'] is False
+    assert result['inputs'] == ['https://muxed.example/video']
+    assert len(calls) == 3
 
 
 def test_split_source_audio_map_uses_ytdlp_audio_input():

@@ -8,8 +8,8 @@ from . import url_sources
 
 
 # Signed YouTube media URLs normally remain valid for a while, but resolving once per
-# FFmpeg platform needlessly hits yt-dlp. Re-resolve after this window so supervisor
-# recovery can obtain fresh signed URLs during long broadcasts.
+# FFmpeg platform needlessly hits yt-dlp. Recovery clears this cache immediately after
+# a failure; otherwise refresh periodically during long broadcasts.
 RESOLVE_CACHE_SECONDS = 300
 
 
@@ -29,44 +29,44 @@ def _get_urls(url: str, selector: str, timeout=55) -> list[str]:
 
 
 def resolve_remote_inputs(url: str, timeout=55) -> dict:
-    """Resolve a remote source into one muxed input or separate video/audio inputs.
+    """Resolve a source at the highest quality yt-dlp can expose.
 
-    YouTube increasingly exposes some videos without a progressive A/V format. The old
-    HostStorm resolver requested only a single ``best`` stream and failed with
-    "Requested format is not available". We prefer a <=1080p muxed stream when one is
-    available, then fall back to yt-dlp's documented video-only + audio-only selection.
+    The output profile can still downscale/transcode for Twitch/Kick/YouTube, but the
+    source itself is no longer artificially capped at 1080p. We prefer yt-dlp's best
+    video + best audio selection, then progressively fall back to compatible muxed
+    formats when a site does not expose separate streams.
     """
     url = url_sources.validate_remote_url(url)
     if url_sources._is_direct_media_url(url):
-        return {'inputs': [url], 'split_av': False, 'selector': 'direct'}
+        return {'inputs': [url], 'split_av': False, 'selector': 'direct', 'quality': 'original/direct'}
 
     errors: list[str] = []
-    # First prefer a single A/V stream. The ? keeps formats whose height metadata is
-    # unknown eligible instead of rejecting them outright.
-    for selector in (
-        'b[height<=?1080]/b',
-        'best[height<=?1080][vcodec!=none][acodec!=none]/best[vcodec!=none][acodec!=none]',
-    ):
-        try:
-            lines = _get_urls(url, selector, timeout)
-            if lines:
-                return {'inputs': [lines[0]], 'split_av': False, 'selector': selector}
-        except Exception as exc:
-            errors.append(str(exc))
-
-    # Official yt-dlp style fallback: best video-only + best audio-only. --get-url
-    # returns one URL per selected component; FFmpeg receives them as two inputs and
-    # HostStorm maps video from input 0 and audio from input 1.
-    for selector in (
-        'bv[height<=?1080]+ba/bv+ba/b',
+    selectors = (
+        # yt-dlp recommended style: best video-containing format + best audio, then best.
         'bv*+ba/b',
-    ):
+        'bestvideo*+bestaudio/best',
+        # Some extractors do not support merging selectors through --get-url; keep
+        # progressive/muxed fallbacks without imposing a resolution ceiling.
+        'best[vcodec!=none][acodec!=none]/best',
+        'best',
+    )
+    for selector in selectors:
         try:
             lines = _get_urls(url, selector, timeout)
             if len(lines) >= 2:
-                return {'inputs': lines[:2], 'split_av': True, 'selector': selector}
+                return {
+                    'inputs': lines[:2],
+                    'split_av': True,
+                    'selector': selector,
+                    'quality': 'máxima automática (vídeo+áudio separados)',
+                }
             if len(lines) == 1:
-                return {'inputs': [lines[0]], 'split_av': False, 'selector': selector}
+                return {
+                    'inputs': [lines[0]],
+                    'split_av': False,
+                    'selector': selector,
+                    'quality': 'máxima automática',
+                }
         except Exception as exc:
             errors.append(str(exc))
 
@@ -90,8 +90,25 @@ def _replace_audio_map(cmd: list[str], remote_input_count: int) -> list[str]:
     return result
 
 
+def _source_url_for_session(session, vertical=False) -> str:
+    ch = session.work_channel or {}
+    scheduled = str(ch.get('_schedule_source_url') or '').strip()
+    if session.trigger == 'scheduled' and scheduled:
+        return scheduled
+    source_mode = str(
+        ch.get('shorts_source_mode')
+        if vertical and ch.get('shorts_source_mode') not in (None, 'same')
+        else ch.get('source_mode', 'local')
+    )
+    if source_mode != 'url':
+        return ''
+    if vertical and str(ch.get('shorts_source_mode') or '') == 'url':
+        return str(ch.get('shorts_source_url') or '').strip()
+    return str(ch.get('source_url') or '').strip()
+
+
 def install_url_resilience(manager, streaming_module):
-    """Install resilient scheduled-URL resolution after the professional wrappers."""
+    """Install resilient, maximum-quality URL resolution after professional wrappers."""
     original_input = manager._input_args
     original_build = manager._build_cmd
     original_start_platform = manager._start_platform
@@ -99,8 +116,8 @@ def install_url_resilience(manager, streaming_module):
     manager._hs_last_source_error = {}
 
     def input_args(self, session, vertical=False):
-        remote = str(session.work_channel.get('_schedule_source_url') or '').strip()
-        if session.trigger != 'scheduled' or not remote:
+        remote = _source_url_for_session(session, vertical)
+        if not remote:
             return original_input(session, vertical)
 
         cache = session.work_channel.get('_hs_remote_inputs') or {}
@@ -116,13 +133,15 @@ def install_url_resilience(manager, streaming_module):
                 'inputs': list(resolved['inputs']),
                 'split_av': bool(resolved.get('split_av')),
                 'selector': str(resolved.get('selector') or ''),
+                'quality': str(resolved.get('quality') or 'máxima automática'),
                 'resolved_at': now,
             }
             session.work_channel['_hs_remote_inputs'] = cache
+            session.work_channel['_hs_source_quality'] = cache['quality']
             try:
                 self.log(
                     session.channel_id,
-                    f"Fonte URL resolvida via yt-dlp: {cache['selector']} · "
+                    f"Fonte URL resolvida via yt-dlp: {cache['selector']} · {cache['quality']} · "
                     f"{len(cache['inputs'])} input(s).",
                 )
             except Exception:
@@ -142,6 +161,12 @@ def install_url_resilience(manager, streaming_module):
         return _replace_audio_map(cmd, remote_count)
 
     def start_platform(self, session, slug, recovery=False):
+        if recovery:
+            # Always resolve fresh signed URLs after a platform/network failure.
+            try:
+                session.work_channel.pop('_hs_remote_inputs', None)
+            except Exception:
+                pass
         try:
             return original_start_platform(session, slug, recovery)
         except Exception as exc:
