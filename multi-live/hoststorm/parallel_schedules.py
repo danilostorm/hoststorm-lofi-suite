@@ -5,7 +5,7 @@ import random
 import signal
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import MethodType
 
@@ -39,25 +39,17 @@ def _source_seek(session, elapsed):
         return max(0.0, elapsed - before)
     if str(ch.get('_schedule_source_url') or '').strip():
         return elapsed
-    if session.media:
-        try:
-            total = float(getattr(session, '_hs_parallel_cycle_duration', 0) or 0)
-            if total > 0 and ch.get('_repeat_playlist'):
-                return elapsed % total
-        except Exception:
-            pass
+    try:
+        total = float(getattr(session, '_hs_parallel_cycle_duration', 0) or 0)
+        if total > 0 and ch.get('_repeat_playlist'):
+            return elapsed % total
+    except Exception:
+        pass
     return elapsed
 
 
 def install_parallel_schedules(manager, streaming_module, db_module):
-    """Allow independent scheduled destinations of one HostStorm channel to run together.
-
-    The legacy manager stores one primary session per channel. This extension keeps extra
-    scheduled runs in a sidecar registry when their target platforms do not overlap the
-    already-running platforms. Each sidecar has its own FFmpeg processes, retry loop,
-    duration and persistent checkpoint, so a YouTube run no longer blocks a Kick-only
-    schedule on the same HostStorm channel.
-    """
+    """Allow non-overlapping scheduled platforms of one channel to run simultaneously."""
     original_start = manager.start
     original_stop = manager.stop
     original_status = manager.channel_status
@@ -91,13 +83,25 @@ def install_parallel_schedules(manager, streaming_module, db_module):
         data = original_status(cid)
         parallel = []
         for sess in parallel_sessions_for(self, cid):
-            row = {'run_id': sess.run_id, 'schedule_id': sess.schedule_id or '', 'platforms': {}, 'started_at': sess.started_at, 'stop_at': sess.stop_at}
+            row = {
+                'run_id': sess.run_id, 'schedule_id': sess.schedule_id or '', 'platforms': {},
+                'started_at': sess.started_at, 'stop_at': sess.stop_at,
+            }
             for slug, ps in (sess.platform_states or {}).items():
                 alive = _alive(ps)
-                item = {'running': alive, 'pid': ps.process.pid if alive else 0, 'retries': ps.retries, 'last_error': ps.last_error, 'label': ps.label, 'parallel': True}
+                item = {
+                    'running': alive, 'pid': ps.process.pid if alive else 0, 'retries': ps.retries,
+                    'last_error': ps.last_error, 'label': ps.label, 'parallel': True,
+                }
                 row['platforms'][slug] = item
-                # No overlap is allowed, so this can safely merge into the public platform map.
                 data.setdefault('platforms', {})[slug] = item
+            yt_items = list(getattr(sess, '_hs_youtube_playlist_items', []) or [])
+            if yt_items:
+                idx = max(0, min(int(getattr(sess, '_hs_youtube_playlist_index', 0) or 0), len(yt_items) - 1))
+                row['youtube_playlist'] = {
+                    'position': idx + 1, 'count': len(yt_items), 'title': yt_items[idx].get('title') or '',
+                    'cycle': int(getattr(sess, '_hs_youtube_playlist_cycle', 0) or 0),
+                }
             if any(x.get('running') for x in row['platforms'].values()):
                 parallel.append(row)
         if parallel:
@@ -108,6 +112,19 @@ def install_parallel_schedules(manager, streaming_module, db_module):
     def active_platforms(self, cid):
         st = status(self, cid)
         return {slug for slug, item in (st.get('platforms') or {}).items() if item.get('running')}
+
+    def current_elapsed(self, session):
+        values = []
+        now_mono = time.monotonic()
+        for ps in (session.platform_states or {}).values():
+            if not _alive(ps):
+                continue
+            base = max(0.0, float(getattr(ps, '_hs_parallel_base_position', 0) or 0))
+            started = float(getattr(ps, '_hs_parallel_started_monotonic', 0) or 0)
+            values.append(base + (max(0.0, now_mono - started) if started else 0.0))
+        if values:
+            return max(values)
+        return max(0.0, float(getattr(session, '_hs_parallel_last_elapsed', 0) or 0))
 
     def save_parallel_state(self, session, elapsed=None, status_name='running', resume_enabled=True):
         if elapsed is None:
@@ -126,28 +143,12 @@ def install_parallel_schedules(manager, streaming_module, db_module):
                 str(session.stop_at or ''), status_name, int(bool(resume_enabled)), now_iso(),
             ))
 
-    def current_elapsed(self, session):
-        values = []
-        now_mono = time.monotonic()
-        for ps in (session.platform_states or {}).values():
-            if not _alive(ps):
-                continue
-            base = max(0.0, float(getattr(ps, '_hs_parallel_base_position', 0) or 0))
-            started = float(getattr(ps, '_hs_parallel_started_monotonic', 0) or 0)
-            values.append(base + (max(0.0, now_mono - started) if started else 0.0))
-        if values:
-            return max(values)
-        return max(0.0, float(getattr(session, '_hs_parallel_last_elapsed', 0) or 0))
-
     def mark_started(self, session, slug, base_elapsed):
         ps = session.platform_states.get(slug)
         if not ps:
             return
-        # When the playlist wrapper advanced to a new item, the canonical base is the
-        # elapsed duration of all previous items/cycles, not the failed process position.
-        ch = session.work_channel or {}
-        if ch.get('_hs_youtube_playlist_active'):
-            base_elapsed = max(0.0, float(ch.get('_hs_youtube_playlist_elapsed_before') or 0))
+        if (session.work_channel or {}).get('_hs_youtube_playlist_active'):
+            base_elapsed = max(0.0, float((session.work_channel or {}).get('_hs_youtube_playlist_elapsed_before') or 0))
         ps._hs_parallel_base_position = max(0.0, float(base_elapsed or 0))
         ps._hs_parallel_started_monotonic = time.monotonic()
         session._hs_parallel_last_elapsed = ps._hs_parallel_base_position
@@ -178,7 +179,10 @@ def install_parallel_schedules(manager, streaming_module, db_module):
             streaming_module.finish_live_run(session.run_id, 'finished', reason)
             if session.schedule_id:
                 streaming_module.update_schedule_status(session.schedule_id, last_finished_at=now_iso(), last_status='Finalizada: ' + reason)
-            streaming_module.audit('info', 'parallel_live_stopped', session.channel_id, f'Live paralela encerrada: {reason}', {'run_id': session.run_id, 'schedule_id': session.schedule_id})
+            streaming_module.audit(
+                'info', 'parallel_live_stopped', session.channel_id, f'Live paralela encerrada: {reason}',
+                {'run_id': session.run_id, 'schedule_id': session.schedule_id},
+            )
         except Exception:
             pass
         save_parallel_state(self, session, current_elapsed(self, session), 'stopped', False)
@@ -189,6 +193,37 @@ def install_parallel_schedules(manager, streaming_module, db_module):
                 pass
         with self.lock:
             self._hs_parallel_sessions.pop(run_id, None)
+
+    def prepare_youtube_playlist(self, schedule):
+        from .youtube_playlist import (
+            _elapsed_before_index, _restore_order, _total_limit, get_playlist_items,
+            probe_youtube_playlist, replace_playlist_items,
+        )
+        schedule = dict(schedule)
+        sid = str(schedule.get('id') or '')
+        try:
+            fresh = probe_youtube_playlist(schedule.get('source_url', ''), timeout=90)
+            items = list(fresh.get('items') or [])
+            if items:
+                replace_playlist_items(db_module, sid, items)
+                schedule['source_title'] = fresh.get('title') or schedule.get('source_title') or 'Playlist do YouTube'
+                schedule['source_duration_seconds'] = fresh.get('duration_seconds') or schedule.get('source_duration_seconds') or 0
+        except Exception:
+            items = get_playlist_items(db_module, sid)
+        if not items:
+            raise RuntimeError('A playlist do YouTube não possui itens reproduzíveis.')
+
+        order = schedule.get('playlist_runtime_order') or []
+        if order:
+            items = _restore_order(items, order)
+        elif schedule.get('shuffle'):
+            random.shuffle(items)
+        index = max(0, min(int(schedule.get('playlist_runtime_index') or 0), len(items) - 1))
+        cycle = max(0, int(schedule.get('playlist_runtime_cycle') or 0))
+        elapsed_before = max(0.0, float(schedule.get('playlist_runtime_elapsed_before') or 0))
+        if elapsed_before <= 0:
+            elapsed_before = _elapsed_before_index(items, index, cycle)
+        return items, index, cycle, elapsed_before, _total_limit(schedule, items)
 
     def start_parallel(self, cid, platforms, media, schedule):
         ch = streaming_module.get_channel(cid)
@@ -208,10 +243,28 @@ def install_parallel_schedules(manager, streaming_module, db_module):
         work['_hs_parallel_session'] = True
         source_mode = str(schedule.get('source_mode') or 'library')
         media = list(media or schedule.get('media') or [])
-        max_duration = 0.0
+        total_limit = 0.0
         cycle_duration = 0.0
+        yt_items = []
+        yt_index = 0
+        yt_cycle = 0
+        yt_elapsed_before = 0.0
 
-        if source_mode == 'url':
+        if source_mode == 'youtube_playlist':
+            try:
+                yt_items, yt_index, yt_cycle, yt_elapsed_before, total_limit = prepare_youtube_playlist(self, schedule)
+            except Exception as exc:
+                return False, str(exc)
+            current = yt_items[yt_index]
+            work['_schedule_source_url'] = current['url']
+            work['_schedule_source_title'] = current.get('title') or 'Vídeo da playlist'
+            work['_hs_youtube_playlist_active'] = True
+            work['_hs_youtube_playlist_index'] = yt_index
+            work['_hs_youtube_playlist_elapsed_before'] = yt_elapsed_before
+            work['_repeat_playlist'] = False
+            media = []
+            label = str(schedule.get('source_title') or 'Playlist do YouTube')
+        elif source_mode == 'url':
             source_url = str(schedule.get('source_url') or '').strip()
             if not source_url:
                 return False, 'Agenda por URL sem fonte configurada.'
@@ -222,15 +275,21 @@ def install_parallel_schedules(manager, streaming_module, db_module):
             stop_before = max(0, int(schedule.get('stop_before_seconds') or 0))
             max_minutes = max(0, int(schedule.get('max_duration_minutes') or 0))
             if duration > 0:
-                max_duration = max(1.0, duration - stop_before)
+                total_limit = max(1.0, duration - stop_before)
                 if max_minutes > 0:
-                    max_duration = min(max_duration, max_minutes * 60.0)
+                    total_limit = min(total_limit, max_minutes * 60.0)
             elif max_minutes > 0:
-                max_duration = max_minutes * 60.0
+                total_limit = max_minutes * 60.0
             else:
                 return False, 'A URL não informou duração e a agenda não possui duração máxima.'
             media = []
             label = work['_schedule_source_title'] or source_url
+            try:
+                from .live_url_guard import _probe_is_live
+                if hasattr(self, '_hs_live_url_flags'):
+                    self._hs_live_url_flags[source_url] = _probe_is_live(source_url)
+            except Exception:
+                pass
         else:
             if schedule.get('shuffle'):
                 random.shuffle(media)
@@ -239,27 +298,45 @@ def install_parallel_schedules(manager, streaming_module, db_module):
             cycle_duration = float(self._playlist_duration(media))
             stop_before = max(0, int(schedule.get('stop_before_seconds') or 60))
             if schedule.get('repeat_playlist') and int(schedule.get('max_duration_minutes') or 0) > 0:
-                max_duration = max(1.0, int(schedule.get('max_duration_minutes') or 0) * 60.0 - stop_before)
+                total_limit = max(1.0, int(schedule.get('max_duration_minutes') or 0) * 60.0 - stop_before)
             elif schedule.get('repeat_playlist'):
-                max_duration = 10 * 365 * 24 * 3600.0
+                total_limit = 10 * 365 * 24 * 3600.0
             else:
-                max_duration = max(1.0, cycle_duration - stop_before)
+                total_limit = max(1.0, cycle_duration - stop_before)
             work['_repeat_playlist'] = bool(schedule.get('repeat_playlist'))
             label = ' → '.join(media)
 
-        stop_at = (now_dt() + __import__('datetime').timedelta(seconds=max_duration)).isoformat() if max_duration > 0 else ''
+        resume_elapsed = max(0.0, float(schedule.get('_parallel_resume_elapsed') or 0))
+        remaining = max(0.0, total_limit - resume_elapsed) if total_limit > 0 else 0.0
+        if total_limit > 0 and remaining <= 1:
+            return False, 'A transmissão paralela já chegou ao fim do período programado.'
+        stop_at = (now_dt() + timedelta(seconds=remaining or total_limit)).isoformat() if (remaining or total_limit) > 0 else ''
         run_id = streaming_module.create_live_run(cid, schedule.get('id'), 'scheduled', label, valid, stop_at)
         session = streaming_module.Session(
             channel_id=cid, run_id=run_id, trigger='scheduled', schedule_id=schedule.get('id'), platforms=valid,
             media=media, started_at=now_iso(), stop_at=stop_at, desired_running=True, work_channel=work,
-            max_duration_seconds=max_duration,
+            max_duration_seconds=remaining or total_limit,
         )
         session._hs_schedule_snapshot = dict(schedule)
         session._hs_parallel_cycle_duration = cycle_duration
-        resume_elapsed = max(0.0, float(schedule.get('_parallel_resume_elapsed') or 0))
+        session._hs_parallel_total_limit = total_limit
         session._hs_parallel_last_elapsed = resume_elapsed
         if len(media) > 1:
             session.playlist_path = str(self._make_concat_file(cid, run_id, media))
+
+        if yt_items:
+            session._hs_youtube_playlist_items = yt_items
+            session._hs_youtube_playlist_index = yt_index
+            session._hs_youtube_playlist_cycle = yt_cycle
+            session._hs_youtube_playlist_repeat = bool(schedule.get('repeat_playlist'))
+            session._hs_youtube_playlist_shuffle = bool(schedule.get('shuffle'))
+            snap = dict(schedule)
+            snap['source_mode'] = 'youtube_playlist'
+            snap['playlist_runtime_index'] = yt_index
+            snap['playlist_runtime_cycle'] = yt_cycle
+            snap['playlist_runtime_elapsed_before'] = yt_elapsed_before
+            snap['playlist_runtime_order'] = [str(x.get('id') or '') for x in yt_items if x.get('id')]
+            session._hs_schedule_snapshot = snap
 
         with self.lock:
             self._hs_parallel_sessions[run_id] = session
@@ -307,8 +384,7 @@ def install_parallel_schedules(manager, streaming_module, db_module):
             ch = streaming_module.get_channel(cid) or {}
             if not requested:
                 requested = [slug for slug, d in (ch.get('destinations') or {}).items() if d.get('enabled')]
-            overlap = active.intersection(set(requested))
-            if overlap:
+            if active.intersection(set(requested)):
                 return False, 'Já existe live ativa neste canal nas plataformas selecionadas.'
         return original_start(cid, platforms, media, trigger, schedule)
 
@@ -323,7 +399,6 @@ def install_parallel_schedules(manager, streaming_module, db_module):
         time.sleep(3)
         while True:
             try:
-                sessions = []
                 with self.lock:
                     sessions = list(self._hs_parallel_sessions.values())
                 now = time.time()
@@ -352,8 +427,8 @@ def install_parallel_schedules(manager, streaming_module, db_module):
                                 base = total_elapsed
                                 if after_index != before_index and (session.work_channel or {}).get('_hs_youtube_playlist_active'):
                                     base = float((session.work_channel or {}).get('_hs_youtube_playlist_elapsed_before') or 0)
-                                    session._hs_active_seek_seconds = 0.0
                                 mark_started(self, session, slug, base)
+                                session._hs_active_seek_seconds = 0.0
                                 continue
                         code = ps.process.returncode if ps.process else None
                         ps.last_error = f'FFmpeg encerrou com código {code}'
@@ -361,7 +436,10 @@ def install_parallel_schedules(manager, streaming_module, db_module):
                         ps.retries += 1
                         ps.next_retry_at = now + delay
                         try:
-                            streaming_module.upsert_platform_run(session.run_id, slug, status='reconnecting', retries=ps.retries, last_error=ps.last_error, ended_at=now_iso())
+                            streaming_module.upsert_platform_run(
+                                session.run_id, slug, status='reconnecting', retries=ps.retries,
+                                last_error=ps.last_error, ended_at=now_iso(),
+                            )
                         except Exception:
                             pass
                         self.log(session.channel_id, f'{ps.label} (live paralela) caiu. Nova tentativa em {delay}s.')
@@ -389,7 +467,10 @@ def install_parallel_schedules(manager, streaming_module, db_module):
                 stop_at = parse_iso(data.get('stop_at'))
                 if stop_at and now_dt() >= stop_at:
                     with db_module.connect() as con:
-                        con.execute("UPDATE parallel_schedule_state SET status='finished',resume_enabled=0,updated_at=? WHERE run_id=?", (now_iso(), data['run_id']))
+                        con.execute(
+                            "UPDATE parallel_schedule_state SET status='finished',resume_enabled=0,updated_at=? WHERE run_id=?",
+                            (now_iso(), data['run_id']),
+                        )
                     continue
                 try:
                     schedule = json.loads(data.get('schedule_json') or '{}')
@@ -407,15 +488,23 @@ def install_parallel_schedules(manager, streaming_module, db_module):
                 schedule = dict(schedule)
                 schedule['_force_parallel_session'] = True
                 schedule['_parallel_resume_elapsed'] = max(0.0, float(data.get('elapsed_seconds') or 0))
-                ok, msg = self.start(data['channel_id'], platforms=platforms, media=schedule.get('media'), trigger='scheduled', schedule=schedule)
+                ok, msg = self.start(
+                    data['channel_id'], platforms=platforms, media=schedule.get('media'),
+                    trigger='scheduled', schedule=schedule,
+                )
                 if ok:
                     with db_module.connect() as con:
-                        con.execute("UPDATE parallel_schedule_state SET status='superseded',resume_enabled=0,updated_at=? WHERE run_id=?", (now_iso(), data['run_id']))
+                        con.execute(
+                            "UPDATE parallel_schedule_state SET status='superseded',resume_enabled=0,updated_at=? WHERE run_id=?",
+                            (now_iso(), data['run_id']),
+                        )
                     try:
-                        streaming_module.audit('info', 'parallel_live_resumed', data['channel_id'], 'Live paralela retomada após reinício.', {'old_run_id': data['run_id'], 'message': msg})
+                        streaming_module.audit(
+                            'info', 'parallel_live_resumed', data['channel_id'], 'Live paralela retomada após reinício.',
+                            {'old_run_id': data['run_id'], 'message': msg},
+                        )
                     except Exception:
                         pass
-            
         except Exception as exc:
             try:
                 streaming_module.audit('error', 'parallel_boot_resume_error', '', str(exc))
