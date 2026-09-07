@@ -18,8 +18,10 @@ def create_app():
     from .broadcast_automation import automation_bp, install_broadcast_automation
     from .ai_db import init_ai_db
     from .ai_voice import install_ai_voice
+    from .schedule_guard import install_schedule_platform_guard
     from .recovery import install_recovery_engine
     from .recovery_retry import install_recovery_retry
+    from .live_url_guard import install_live_url_guard
 
     app = Flask(__name__, template_folder='../templates', static_folder='../static')
     app.secret_key = os.environ.get('HOSTSTORM_SECRET_KEY') or os.environ.get('LV2_ADMIN_PASSWORD') or os.urandom(32)
@@ -57,11 +59,16 @@ def create_app():
     install_distributed(streaming_module.MANAGER)
     install_broadcast_automation(app, db_module, legacy_web, scheduler_module, streaming_module.MANAGER)
 
+    # v4.0.4: uma plataforma antiga/sem chave não cancela as demais plataformas válidas da agenda.
+    install_schedule_platform_guard(streaming_module.MANAGER, streaming_module)
+
     # v4.0.3: recovery é instalado por último no pipeline de streaming para enxergar o comando final,
     # persistir checkpoints e aplicar seek também quando o start passa por automação/distribuição.
     install_recovery_engine(streaming_module.MANAGER, streaming_module, db_module)
     # Se o servidor voltar antes da Internet, continue tentando o checkpoint com backoff até reconectar.
     install_recovery_retry(streaming_module.MANAGER, streaming_module, db_module)
+    # v4.0.4: VOD continua usando checkpoint/seek; fonte realmente AO VIVO volta no live edge sem -ss.
+    install_live_url_guard(streaming_module.MANAGER, streaming_module)
 
     # Compatibilidade do módulo web profissional: list_backups pertence a professional.py.
     from . import pro_db as pro_db_module
