@@ -1,3 +1,25 @@
+# 4.0.4
+
+HostStorm Multi Live Manager 4.0.4 — agendamentos concorrentes e recovery correto de fontes AO VIVO.
+
+## Agendamentos / plataformas
+- uma plataforma salva sem RTMP/chave válida deixa de cancelar toda a agenda;
+- destinos inválidos são ignorados quando existe pelo menos uma plataforma válida para iniciar;
+- o auditor registra `schedule_platform_ignored` com os destinos descartados;
+- se nenhuma plataforma válida restar, a mensagem passa a indicar claramente quais destinos precisam ser configurados;
+- a correção vale para agendas por URL e por Biblioteca, inclusive `Executar agora` e agendas antigas já salvas.
+
+## Recovery de URL ao vivo
+- fontes VOD continuam retomando do checkpoint com `-ss`;
+- fontes que o yt-dlp identifica como transmissão realmente AO VIVO deixam de receber seek absoluto durante recovery;
+- após queda/restart, uma fonte AO VIVO volta ao live edge atual, evitando loops de EOF/recovery causados por seek acumulado;
+- detecção usa `is_live`/`live_status` do yt-dlp e é reavaliada a cada novo start/retry.
+
+## Testes
+- cobertura para agenda com Kick válido + Custom RTMP vazio, garantindo que Kick inicia e Custom é apenas ignorado;
+- cobertura para falha quando todos os destinos estão sem RTMP/chave;
+- cobertura para remoção de seek em fonte AO VIVO e manutenção do comportamento VOD.
+
 # 4.0.3
 
 HostStorm Multi Live Manager 4.0.3 — Live Recovery Engine e qualidade máxima de fonte.
