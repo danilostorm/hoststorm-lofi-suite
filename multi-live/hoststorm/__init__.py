@@ -71,8 +71,9 @@ def create_app():
     # v4.1: different destinations of the same HostStorm channel may run independently.
     install_parallel_schedules(streaming_module.MANAGER, streaming_module, db_module)
 
-    from .pro_db import list_backups as professional_list_backups
+    # Compatibilidade do módulo web profissional: list_backups pertence a professional.py.
     from . import pro_db as pro_db_module
+    from .professional import list_backups as professional_list_backups
     pro_db_module.list_backups = professional_list_backups
 
     legacy_web.ADMIN_PASSWORD = ''
