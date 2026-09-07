@@ -22,6 +22,8 @@ def create_app():
     from .recovery import install_recovery_engine
     from .recovery_retry import install_recovery_retry
     from .live_url_guard import install_live_url_guard
+    from .youtube_playlist import install_youtube_playlist, playlist_bp
+    from .parallel_schedules import install_parallel_schedules
 
     app = Flask(__name__, template_folder='../templates', static_folder='../static')
     app.secret_key = os.environ.get('HOSTSTORM_SECRET_KEY') or os.environ.get('LV2_ADMIN_PASSWORD') or os.urandom(32)
@@ -39,49 +41,45 @@ def create_app():
     init_ai_db()
     install_secure_compat(db_module, legacy_web, streaming_module)
 
-    # v3.1: fontes remotas entram antes dos wrappers profissionais/distribuídos.
     install_url_sources(app, db_module, legacy_web, streaming_module)
 
-    # web.py carrega scheduler.py cedo para expor due_info. Mantemos a referência sincronizada.
     from . import scheduler as scheduler_module
     scheduler_module.list_schedules = db_module.list_schedules
 
     install_professional_streaming(streaming_module.MANAGER, streaming_module)
     install_advanced_overlays(streaming_module.MANAGER)
-    # v4.0.2+: resolução URL resiliente, qualidade máxima automática e fallback A/V separado.
     install_url_resilience(streaming_module.MANAGER, streaming_module)
-    # v4: o barramento TTS entra depois dos overlays/profiles para injetar áudio no comando FFmpeg final.
     install_ai_voice(streaming_module.MANAGER, streaming_module)
 
-    # Distributed wrapper fica dentro da automação de metadados: o Controller altera título/categoria
-    # antes de delegar a execução a um nó remoto.
     from .distributed import install_distributed
     install_distributed(streaming_module.MANAGER)
     install_broadcast_automation(app, db_module, legacy_web, scheduler_module, streaming_module.MANAGER)
 
-    # v4.0.4: uma plataforma antiga/sem chave não cancela as demais plataformas válidas da agenda.
     install_schedule_platform_guard(streaming_module.MANAGER, streaming_module)
 
-    # v4.0.3: recovery é instalado por último no pipeline de streaming para enxergar o comando final,
-    # persistir checkpoints e aplicar seek também quando o start passa por automação/distribuição.
+    # Keep the fully-featured pre-recovery platform launcher. YouTube playlists and
+    # parallel sidecar schedules need item-aware checkpoints rather than the old
+    # channel-wide seek wrapper, but still need profiles, overlays, URL resilience and TTS.
+    streaming_module.MANAGER._hs_pre_recovery_start_platform = streaming_module.MANAGER._start_platform
+
     install_recovery_engine(streaming_module.MANAGER, streaming_module, db_module)
-    # Se o servidor voltar antes da Internet, continue tentando o checkpoint com backoff até reconectar.
     install_recovery_retry(streaming_module.MANAGER, streaming_module, db_module)
-    # v4.0.4: VOD continua usando checkpoint/seek; fonte realmente AO VIVO volta no live edge sem -ss.
     install_live_url_guard(streaming_module.MANAGER, streaming_module)
 
-    # Compatibilidade do módulo web profissional: list_backups pertence a professional.py.
+    # v4.1: real YouTube playlists are item-aware and can resume at the correct item/time.
+    install_youtube_playlist(app, db_module, legacy_web, scheduler_module, streaming_module.MANAGER, streaming_module)
+    # v4.1: different destinations of the same HostStorm channel may run independently.
+    install_parallel_schedules(streaming_module.MANAGER, streaming_module, db_module)
+
+    from .pro_db import list_backups as professional_list_backups
     from . import pro_db as pro_db_module
-    from .professional import list_backups as professional_list_backups
     pro_db_module.list_backups = professional_list_backups
 
-    # A autenticação Basic da v2 é substituída pela autenticação profissional da v3.
     legacy_web.ADMIN_PASSWORD = ''
     from . import auth as auth_module
     from .auth import auth_bp
     install_passkey_auth(auth_module)
 
-    # v3.2 amplia o verificador usado pelo painel sem quebrar o armazenamento criptografado existente.
     from . import integrations as integrations_module
     from .integrations_v32 import check_integration_v32
     integrations_module.check_integration = check_integration_v32
@@ -105,6 +103,7 @@ def create_app():
     app.register_blueprint(pro_bp)
     app.register_blueprint(ops_bp)
     app.register_blueprint(urlmedia_bp)
+    app.register_blueprint(playlist_bp)
     app.register_blueprint(automation_bp)
     app.register_blueprint(ai_bp)
     app.register_blueprint(compat_bp)
