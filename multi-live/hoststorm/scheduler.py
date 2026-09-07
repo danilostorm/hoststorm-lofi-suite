@@ -29,7 +29,6 @@ def due_info(schedule, now=None):
         if now.weekday()>4: return None
     elif kind=='weekly':
         if now.weekday() not in set(schedule.get('weekdays') or []): return None
-    # daily always applies
     try:
         hh,mm=map(int,schedule['time'].split(':'))
     except Exception:
@@ -42,6 +41,10 @@ def due_info(schedule, now=None):
     run_key=f'{schedule["id"]}:{today.isoformat()}:{schedule["time"]}'
     if schedule.get('last_run_key')==run_key: return None
     return {'run_key':run_key,'target':target,'lateness_seconds':int(delta)}
+
+
+def _running_platforms(status):
+    return {slug for slug,item in (status.get('platforms') or {}).items() if item.get('running')}
 
 
 class Scheduler:
@@ -62,18 +65,38 @@ class Scheduler:
                     cid=schedule['channel_id']
                     status=MANAGER.channel_status(cid)
                     if status.get('running'):
-                        policy=schedule.get('conflict_policy','skip')
-                        if policy=='wait':
-                            update_schedule_status(schedule['id'],last_status='Aguardando a live atual terminar.')
-                            continue
-                        if policy=='stop_current':
-                            MANAGER.stop(cid,'interrompida por novo agendamento')
-                            time.sleep(1)
+                        active=_running_platforms(status)
+                        requested=set(schedule.get('platforms') or [])
+                        overlap=active.intersection(requested)
+                        # Since v4.1 platforms are independent. A YouTube live must not block
+                        # a Kick-only schedule of the same HostStorm channel (and vice versa).
+                        if overlap:
+                            policy=schedule.get('conflict_policy','skip')
+                            labels=', '.join(sorted(overlap))
+                            if policy=='wait':
+                                update_schedule_status(schedule['id'],last_status='Aguardando plataforma(s) ocupada(s): '+labels)
+                                continue
+                            if policy=='stop_current':
+                                MANAGER.stop(cid,'interrompida por novo agendamento com plataforma em conflito')
+                                time.sleep(1)
+                            else:
+                                update_schedule_status(
+                                    schedule['id'],last_run_key=info['run_key'],
+                                    last_status='Ignorada: plataforma(s) já ao vivo: '+labels,
+                                )
+                                audit(
+                                    'warning','schedule_skipped',cid,
+                                    'Agenda ignorada porque a mesma plataforma já estava ao vivo: '+labels,
+                                    {'schedule_id':schedule['id'],'active_platforms':sorted(active),'requested_platforms':sorted(requested),'overlap':sorted(overlap)},
+                                )
+                                BUS.publish('schedule_skipped',{'channel_id':cid,'schedule_id':schedule['id'],'overlap':sorted(overlap)})
+                                continue
                         else:
-                            update_schedule_status(schedule['id'],last_run_key=info['run_key'],last_status='Ignorada: canal já estava ao vivo.')
-                            audit('warning','schedule_skipped',cid,'Agenda ignorada porque o canal já estava ao vivo.',{'schedule_id':schedule['id']})
-                            BUS.publish('schedule_skipped',{'channel_id':cid,'schedule_id':schedule['id']})
-                            continue
+                            audit(
+                                'info','schedule_parallel',cid,
+                                'Agenda pode iniciar em paralelo; as plataformas selecionadas estão livres.',
+                                {'schedule_id':schedule['id'],'active_platforms':sorted(active),'requested_platforms':sorted(requested)},
+                            )
                     ok,msg=MANAGER.start(cid,platforms=schedule.get('platforms'),media=schedule.get('media'),trigger='scheduled',schedule=schedule)
                     updates={'last_run_key':info['run_key'],'last_status':msg}
                     if ok: updates['last_started_at']=now_iso()
