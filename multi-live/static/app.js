@@ -5,6 +5,34 @@
   function setScheduleFields(){const kind=$('#scheduleKind');if(!kind)return;const weekly=$('#weekdayPicker'),once=$('#runDateField');if(weekly)weekly.style.display=kind.value==='weekly'?'flex':'none';if(once)once.style.display=kind.value==='once'?'grid':'none';}
   $('#scheduleKind')?.addEventListener('change',setScheduleFields); setScheduleFields();
 
+  async function refreshSchedulePlatforms(){
+    const form=$('#scheduleForm');
+    const channel=form?.querySelector('select[name="channel_id"]');
+    const picker=form?.querySelector('.platform-picker');
+    if(!form||!channel||!picker||!channel.value)return;
+    const token=String(Date.now())+Math.random();
+    picker.dataset.loadToken=token;
+    picker.setAttribute('aria-busy','true');
+    try{
+      const r=await fetch(`/schedules/new?channel=${encodeURIComponent(channel.value)}`,{cache:'no-store'});
+      if(!r.ok)throw new Error(`HTTP ${r.status}`);
+      const html=await r.text();
+      const doc=new DOMParser().parseFromString(html,'text/html');
+      const next=doc.querySelector('#scheduleForm .platform-picker');
+      if(!next)throw new Error('Lista de plataformas não encontrada.');
+      if(picker.dataset.loadToken!==token)return;
+      picker.innerHTML=next.innerHTML;
+    }catch(e){
+      console.error('HostStorm: falha atualizando plataformas da agenda',e);
+    }finally{
+      if(picker.dataset.loadToken===token){
+        picker.removeAttribute('aria-busy');
+        delete picker.dataset.loadToken;
+      }
+    }
+  }
+  $('#scheduleForm select[name="channel_id"]')?.addEventListener('change',refreshSchedulePlatforms);
+
   $$('[data-preflight]').forEach(btn=>btn.addEventListener('click',async()=>{
     btn.disabled=true;const old=btn.textContent;btn.textContent='Testando...';
     try{
