@@ -6,12 +6,13 @@ import subprocess
 import threading
 import time
 import urllib.parse
+from datetime import timedelta
 from types import MethodType
 
 from flask import Blueprint, flash, jsonify, redirect, request, url_for
 
 from .url_sources import validate_remote_url, ytdlp_status
-from .utils import now_iso
+from .utils import now_dt, now_iso
 
 playlist_bp = Blueprint('ytplaylist', __name__)
 
@@ -53,11 +54,10 @@ def probe_youtube_playlist(url: str, timeout=90) -> dict:
     except Exception as exc:
         raise RuntimeError('Resposta inválida do yt-dlp para playlist.') from exc
 
-    entries = list(data.get('entries') or [])
     items = []
     known_total = 0.0
     known_count = 0
-    for pos, entry in enumerate(entries):
+    for pos, entry in enumerate(list(data.get('entries') or [])):
         if not isinstance(entry, dict):
             continue
         item_url = _entry_url(entry)
@@ -114,8 +114,7 @@ def replace_playlist_items(db_module, sid: str, items: list[dict]):
         con.execute('DELETE FROM schedule_youtube_playlist_items WHERE schedule_id=?', (sid,))
         for pos, item in enumerate(items):
             con.execute(
-                'INSERT INTO schedule_youtube_playlist_items(schedule_id,position,video_id,title,url,duration_seconds,availability) '
-                'VALUES(?,?,?,?,?,?,?)',
+                'INSERT INTO schedule_youtube_playlist_items(schedule_id,position,video_id,title,url,duration_seconds,availability) VALUES(?,?,?,?,?,?,?)',
                 (sid, pos, str(item.get('id') or ''), str(item.get('title') or '')[:500], str(item.get('url') or ''),
                  max(0.0, float(item.get('duration_seconds') or 0)), str(item.get('availability') or '')[:120]),
             )
@@ -124,14 +123,12 @@ def replace_playlist_items(db_module, sid: str, items: list[dict]):
 def get_playlist_items(db_module, sid: str) -> list[dict]:
     with db_module.connect() as con:
         rows = con.execute(
-            'SELECT position,video_id,title,url,duration_seconds,availability '
-            'FROM schedule_youtube_playlist_items WHERE schedule_id=? ORDER BY position', (sid,)
+            'SELECT position,video_id,title,url,duration_seconds,availability FROM schedule_youtube_playlist_items WHERE schedule_id=? ORDER BY position',
+            (sid,),
         ).fetchall()
     return [
-        {
-            'position': int(r['position']), 'id': r['video_id'], 'title': r['title'], 'url': r['url'],
-            'duration_seconds': float(r['duration_seconds'] or 0), 'availability': r['availability'],
-        }
+        {'position': int(r['position']), 'id': r['video_id'], 'title': r['title'], 'url': r['url'],
+         'duration_seconds': float(r['duration_seconds'] or 0), 'availability': r['availability']}
         for r in rows
     ]
 
@@ -167,35 +164,12 @@ def install_playlist_db(db_module, web_module, scheduler_module):
     scheduler_module.list_schedules = list_schedules
 
 
-def _runtime_schedule(schedule: dict, item: dict, items: list[dict]) -> dict:
-    out = dict(schedule or {})
-    repeat = bool(out.get('repeat_playlist'))
-    max_minutes = max(0, int(out.get('max_duration_minutes') or 0))
-    stop_before = max(0, int(out.get('stop_before_seconds') or 0))
-    known_total = sum(max(0.0, float(x.get('duration_seconds') or 0)) for x in items)
-    all_known = bool(items) and all(float(x.get('duration_seconds') or 0) > 0 for x in items)
-    if max_minutes > 0:
-        total = max_minutes * 60.0
-    elif not repeat and all_known:
-        total = max(1.0, known_total - stop_before)
-    elif repeat:
-        total = 10 * 365 * 24 * 3600.0
-    elif known_total > 0:
-        total = max(1.0, known_total - stop_before)
-    else:
-        total = 10 * 365 * 24 * 3600.0
-    out['source_mode'] = 'url'
-    out['source_url'] = item['url']
-    out['source_title'] = str(schedule.get('source_title') or 'Playlist do YouTube')
-    out['source_duration_seconds'] = total
-    out['stop_before_seconds'] = 0
-    out['max_duration_minutes'] = 0
-    out['_youtube_playlist_original_mode'] = 'youtube_playlist'
-    return out
-
-
 def _cycle_duration(items):
     return sum(max(0.0, float(x.get('duration_seconds') or 0)) for x in items)
+
+
+def _all_known(items):
+    return bool(items) and all(float(x.get('duration_seconds') or 0) > 0 for x in items)
 
 
 def _elapsed_before_index(items, index, cycle=0):
@@ -204,13 +178,53 @@ def _elapsed_before_index(items, index, cycle=0):
     )
 
 
+def _total_limit(schedule, items):
+    max_minutes = max(0, int(schedule.get('max_duration_minutes') or 0))
+    stop_before = max(0, int(schedule.get('stop_before_seconds') or 0))
+    if max_minutes > 0:
+        return max(1.0, max_minutes * 60.0)
+    if schedule.get('repeat_playlist'):
+        return 10 * 365 * 24 * 3600.0
+    if _all_known(items):
+        return max(1.0, _cycle_duration(items) - stop_before)
+    # With unavailable/unknown-duration items, let the playlist engine decide the end.
+    return 10 * 365 * 24 * 3600.0
+
+
+def _runtime_schedule(schedule: dict, item: dict) -> dict:
+    out = dict(schedule or {})
+    duration = max(0.0, float(item.get('duration_seconds') or 0))
+    out['source_mode'] = 'url'
+    out['source_url'] = item['url']
+    out['source_title'] = item.get('title') or str(schedule.get('source_title') or 'Playlist do YouTube')
+    out['source_duration_seconds'] = duration
+    out['stop_before_seconds'] = 0
+    # Unknown/live playlist items need a generous per-item ceiling; normal VOD items use
+    # their detected duration so FFmpeg exits naturally and the engine advances.
+    out['max_duration_minutes'] = 24 * 60 if duration <= 0 else 0
+    out['_youtube_playlist_runtime'] = True
+    out['_youtube_playlist_original_mode'] = 'youtube_playlist'
+    return out
+
+
+def _restore_order(items, order_ids):
+    order_ids = [str(x) for x in (order_ids or []) if x]
+    if not order_ids:
+        return list(items)
+    by_id = {str(x.get('id') or ''): x for x in items if x.get('id')}
+    ordered = [by_id[x] for x in order_ids if x in by_id]
+    used = {str(x.get('id') or '') for x in ordered}
+    ordered.extend(x for x in items if str(x.get('id') or '') not in used)
+    return ordered or list(items)
+
+
 def install_playlist_streaming(manager, streaming_module, db_module):
     original_start = manager.start
     original_start_platform = manager._start_platform
     original_status = manager.channel_status
     manager._hs_playlist_start_context = {}
 
-    def _mark_session(self, session, ctx):
+    def mark_session(self, session, ctx):
         items = list(ctx.get('items') or [])
         if not items:
             return
@@ -228,21 +242,39 @@ def install_playlist_streaming(manager, streaming_module, db_module):
         session.work_channel['_schedule_source_url'] = items[index]['url']
         session.work_channel['_schedule_source_title'] = items[index].get('title') or 'Vídeo da playlist'
         snapshot = dict(ctx.get('schedule') or {})
+        snapshot['source_mode'] = 'youtube_playlist'
         snapshot['playlist_runtime_index'] = index
         snapshot['playlist_runtime_cycle'] = cycle
         snapshot['playlist_runtime_elapsed_before'] = elapsed_before
+        snapshot['playlist_runtime_order'] = [str(x.get('id') or '') for x in items if x.get('id')]
         session._hs_schedule_snapshot = snapshot
 
     def start_platform(self, session, slug, recovery=False):
         ctx = self._hs_playlist_start_context.get(str(session.channel_id))
         if ctx and not getattr(session, '_hs_youtube_playlist_items', None):
-            _mark_session(self, session, ctx)
+            mark_session(self, session, ctx)
 
         items = list(getattr(session, '_hs_youtube_playlist_items', []) or [])
+        raw = getattr(self, '_hs_pre_recovery_start_platform', None)
         if not items:
+            if (session.work_channel or {}).get('_hs_parallel_session') and raw:
+                return raw(session, slug, recovery)
             return original_start_platform(session, slug, recovery)
 
         ps = session.platform_states.get(slug)
+        advanced = False
+        total_elapsed = 0.0
+        if recovery:
+            if (session.work_channel or {}).get('_hs_parallel_session'):
+                total_elapsed = max(0.0, float(getattr(session, '_hs_parallel_last_elapsed', 0) or 0))
+            else:
+                try:
+                    from .recovery import get_checkpoint
+                    state = get_checkpoint(session.channel_id) or {}
+                    total_elapsed = max(0.0, float(state.get('elapsed_seconds') or state.get('position_seconds') or 0))
+                except Exception:
+                    total_elapsed = 0.0
+
         if recovery and ps:
             current = int(getattr(session, '_hs_youtube_playlist_index', 0) or 0)
             ps_index = int(getattr(ps, '_hs_playlist_item_index', current) or 0)
@@ -287,34 +319,51 @@ def install_playlist_streaming(manager, streaming_module, db_module):
                         snap['playlist_runtime_cycle'] = cycle
                         snap['playlist_runtime_elapsed_before'] = elapsed_before
                         session._hs_schedule_snapshot = snap
+                        total_elapsed = elapsed_before
+                        advanced = True
                         try:
                             streaming_module.audit(
-                                'warning' if exhausted and not natural else 'info',
-                                'youtube_playlist_advanced', session.channel_id,
+                                'warning' if exhausted and not natural else 'info', 'youtube_playlist_advanced', session.channel_id,
                                 f'Playlist avançou para {next_index + 1}/{len(items)}: {items[next_index].get("title") or items[next_index]["url"]}',
                                 {'index': next_index, 'count': len(items), 'cycle': cycle, 'skipped_after_errors': bool(exhausted and not natural)},
                             )
                         except Exception:
                             pass
 
-            current = int(getattr(session, '_hs_youtube_playlist_index', 0) or 0)
-            session.work_channel['_schedule_source_url'] = items[current]['url']
-            session.work_channel['_schedule_source_title'] = items[current].get('title') or 'Vídeo da playlist'
-            session.work_channel.pop('_hs_remote_inputs', None)
+        current = int(getattr(session, '_hs_youtube_playlist_index', 0) or 0)
+        elapsed_before = max(0.0, float((session.work_channel or {}).get('_hs_youtube_playlist_elapsed_before') or 0))
+        session.work_channel['_schedule_source_url'] = items[current]['url']
+        session.work_channel['_schedule_source_title'] = items[current].get('title') or 'Vídeo da playlist'
+        session.work_channel.pop('_hs_remote_inputs', None)
 
-        ok = original_start_platform(session, slug, recovery)
+        # Playlist recovery is item-aware. Bypass the channel-level recovery wrapper so an
+        # accumulated playlist position (e.g. 8h) is never applied as -ss to a 20min item.
+        launcher = raw or original_start_platform
+        previous_seek = getattr(session, '_hs_active_seek_seconds', 0.0)
+        if recovery and not advanced:
+            session._hs_active_seek_seconds = max(0.0, total_elapsed - elapsed_before)
+        else:
+            session._hs_active_seek_seconds = 0.0
+        try:
+            ok = launcher(session, slug, recovery)
+        finally:
+            session._hs_active_seek_seconds = previous_seek
+
         if ok:
-            current = int(getattr(session, '_hs_youtube_playlist_index', 0) or 0)
             ps = session.platform_states.get(slug)
             if ps:
                 ps._hs_playlist_item_index = current
                 ps._hs_playlist_started_monotonic = time.monotonic()
                 ps.retries = 0
+                # Keep the generic recovery checkpoint monotonic across playlist items.
+                if not (session.work_channel or {}).get('_hs_parallel_session'):
+                    ps._hs_base_position = max(elapsed_before, total_elapsed if recovery and not advanced else elapsed_before)
+                    ps._hs_started_monotonic = time.monotonic()
             try:
                 streaming_module.audit(
                     'info', 'youtube_playlist_item_started', session.channel_id,
                     f'Playlist YouTube {current + 1}/{len(items)}: {items[current].get("title") or items[current]["url"]}',
-                    {'index': current, 'count': len(items), 'url': items[current]['url']},
+                    {'index': current, 'count': len(items), 'url': items[current]['url'], 'recovery': bool(recovery)},
                 )
             except Exception:
                 pass
@@ -326,7 +375,6 @@ def install_playlist_streaming(manager, streaming_module, db_module):
 
         schedule = dict(schedule)
         sid = str(schedule.get('id') or '')
-        items = []
         try:
             fresh = probe_youtube_playlist(schedule.get('source_url', ''), timeout=90)
             items = list(fresh.get('items') or [])
@@ -343,11 +391,14 @@ def install_playlist_streaming(manager, streaming_module, db_module):
             except Exception:
                 pass
 
-        if schedule.get('shuffle'):
-            random.shuffle(items)
-
         requested = getattr(self, '_hs_resume_requests', {}).get(str(cid)) or {}
         requested_schedule = dict(requested.get('schedule') or {})
+        order = requested_schedule.get('playlist_runtime_order') or schedule.get('playlist_runtime_order') or []
+        if order:
+            items = _restore_order(items, order)
+        elif schedule.get('shuffle'):
+            random.shuffle(items)
+
         index = int(requested_schedule.get('playlist_runtime_index', schedule.get('playlist_runtime_index', 0)) or 0)
         cycle = int(requested_schedule.get('playlist_runtime_cycle', schedule.get('playlist_runtime_cycle', 0)) or 0)
         index = max(0, min(index, len(items) - 1))
@@ -360,7 +411,7 @@ def install_playlist_streaming(manager, streaming_module, db_module):
             'repeat': bool(schedule.get('repeat_playlist')), 'shuffle': bool(schedule.get('shuffle')), 'schedule': dict(schedule),
         }
         self._hs_playlist_start_context[str(cid)] = ctx
-        synthetic = _runtime_schedule(schedule, items[index], items)
+        synthetic = _runtime_schedule(schedule, items[index])
         try:
             ok, msg = original_start(cid, platforms, [], trigger, synthetic)
         finally:
@@ -368,15 +419,22 @@ def install_playlist_streaming(manager, streaming_module, db_module):
         if not ok:
             return ok, msg
 
+        total_limit = _total_limit(schedule, items)
         with self.lock:
             session = self.sessions.get(str(cid)) or self.sessions.get(cid)
             if session:
-                _mark_session(self, session, ctx)
+                mark_session(self, session, ctx)
+                session._hs_total_duration_limit = total_limit
+                # On boot recovery the generic engine already reduced max_duration to the
+                # remaining time. Preserve that; on a fresh start expand from item duration
+                # to the whole playlist duration.
+                if not requested:
+                    session.max_duration_seconds = total_limit
+                    session.stop_at = (now_dt() + timedelta(seconds=total_limit)).isoformat()
         try:
             streaming_module.update_schedule_status(sid, last_started_at=now_iso(), last_status=f'Playlist YouTube iniciada: {len(items)} vídeo(s).')
             streaming_module.audit(
-                'info', 'youtube_playlist_started', cid,
-                f'Playlist YouTube iniciada com {len(items)} vídeo(s).',
+                'info', 'youtube_playlist_started', cid, f'Playlist YouTube iniciada com {len(items)} vídeo(s).',
                 {'schedule_id': sid, 'count': len(items), 'start_index': index, 'repeat': bool(schedule.get('repeat_playlist'))},
             )
         except Exception:
@@ -432,21 +490,8 @@ def save_youtube_playlist_schedule():
         return redirect(url_for('web.schedules'))
 
     source_url = request.form.get('playlist_url', '').strip()
-    cached_url = request.form.get('playlist_probe_url', '').strip()
     try:
-        if cached_url == source_url and request.form.get('playlist_items_json'):
-            items = json.loads(request.form.get('playlist_items_json') or '[]')
-            if not isinstance(items, list) or not items:
-                raise ValueError('snapshot vazio')
-            meta = {
-                'title': request.form.get('playlist_title', '').strip() or 'Playlist do YouTube',
-                'duration_seconds': float(request.form.get('playlist_duration_seconds', '0') or 0),
-                'items': items,
-                'extractor': 'youtube:playlist',
-            }
-            validate_remote_url(source_url)
-        else:
-            meta = probe_youtube_playlist(source_url)
+        meta = probe_youtube_playlist(source_url)
     except Exception as exc:
         flash('Não foi possível analisar a playlist: ' + str(exc), 'error')
         return redirect(request.referrer or url_for('web.schedules'))
@@ -469,6 +514,7 @@ def save_youtube_playlist_schedule():
         'shuffle': request.form.get('playlist_shuffle') == 'on',
         'repeat_playlist': request.form.get('playlist_repeat') == 'on',
         'max_duration_minutes': int(request.form.get('max_duration_minutes', '0') or 0),
+        # Reuse the proven URL schedule storage/validation, then change only the source type.
         'source_mode': 'url',
         'source_url': source_url,
         'source_title': str(meta.get('title') or 'Playlist do YouTube')[:500],
