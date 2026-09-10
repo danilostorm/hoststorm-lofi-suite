@@ -222,6 +222,11 @@ def install_seamless_youtube_playlist(manager, streaming_module, db_module):
             if hasattr(self, '_hs_parallel_sessions'):
                 self._hs_parallel_sessions.pop(session.run_id, None)
         save_runtime(ctx, 0, 'finished')
+        try:
+            from .recovery import mark_state
+            mark_state(session.channel_id, 'finished', reason, False)
+        except Exception:
+            pass
         self._hs_seamless_runs.pop(session.run_id, None)
 
     def feeder_loop(self, session, ctx, initial_seek=0.0):
@@ -243,6 +248,14 @@ def install_seamless_youtube_playlist(manager, streaming_module, db_module):
                         ctx['feeder'] = proc
                         last_save = 0.0
                         while proc.poll() is None and not ctx['stop'].is_set() and not session.stop_requested:
+                            total_elapsed = float(ctx.get('resume_total') or 0) + max(
+                                0.0,
+                                time.monotonic() - float(ctx.get('run_started_monotonic') or time.monotonic()),
+                            )
+                            if float(ctx.get('total_limit') or 0) > 0 and total_elapsed >= float(ctx['total_limit']):
+                                _terminate(proc)
+                                finish_session(self, session, ctx, 'duração máxima da playlist concluída')
+                                return
                             pos = max(0.0, time.monotonic() - float(ctx['item_started_monotonic']))
                             if time.monotonic() - last_save >= 5:
                                 update_snapshot(session, ctx, pos)
@@ -340,13 +353,14 @@ def install_seamless_youtube_playlist(manager, streaming_module, db_module):
             feed_urls[slug] = f'udp://127.0.0.1:{port}?pkt_size=1316&buffer_size=65535'
 
         total = _total_limit(schedule, items)
+        publisher_limit = max(1.0, total - resume_total) if requested and total > 0 else total
         synthetic = dict(schedule)
         synthetic['source_mode'] = 'url'
         synthetic['source_url'] = items[index]['url']
         synthetic['source_title'] = schedule.get('source_title') or 'Playlist do YouTube'
-        synthetic['source_duration_seconds'] = total
+        synthetic['source_duration_seconds'] = publisher_limit
         synthetic['stop_before_seconds'] = 0
-        synthetic['max_duration_minutes'] = int(math.ceil(total / 60.0))
+        synthetic['max_duration_minutes'] = int(math.ceil(publisher_limit / 60.0))
         synthetic['_seamless_youtube_playlist'] = True
 
         pending = {
@@ -354,6 +368,7 @@ def install_seamless_youtube_playlist(manager, streaming_module, db_module):
             'index': index, 'cycle': cycle, 'repeat': repeat, 'shuffle': bool(schedule.get('shuffle')),
             'bridge_urls': bridge_urls, 'feed_urls': feed_urls, 'platforms': requested_platforms,
             'stop': threading.Event(), 'feeder': None, 'finishing': False,
+            'total_limit': total, 'resume_total': resume_total, 'run_started_monotonic': time.monotonic(),
         }
         self._hs_seamless_pending[str(cid)] = pending
         try:
