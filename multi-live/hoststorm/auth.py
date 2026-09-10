@@ -23,7 +23,7 @@ CREATOR_BLOCKED_PREFIXES=(
     'web.settings','web.library','web.history','web.log',
     'auth.user',
 )
-CREATOR_BLOCKED_ENDPOINTS={'urlmedia.library_import_url'}
+CREATOR_BLOCKED_ENDPOINTS={'urlmedia.library_import_url','web.api_events'}
 
 
 def _enforce_role_access(user):
