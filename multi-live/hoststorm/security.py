@@ -143,7 +143,7 @@ def totp_uri(secret: str, username: str, issuer: str = 'HostStorm') -> str:
     return f'otpauth://totp/{quote(issuer)}:{quote(username)}?secret={secret}&issuer={quote(issuer)}&algorithm=SHA1&digits=6&period=30'
 
 
-ROLE_RANK = {'viewer': 10, 'operator': 20, 'admin': 30}
+ROLE_RANK = {'viewer': 10, 'creator': 15, 'operator': 20, 'admin': 30}
 
 
 def role_allows(role: str, minimum: str) -> bool:
