@@ -12,14 +12,17 @@
   <link rel="stylesheet" href="{{url_for('static',filename='ai.css')}}">
 </head>
 <body>
+{% set current_user = g.get('user') %}
+{% set is_creator = current_user and current_user.role == 'creator' %}
 <div class="app-shell">
   <aside class="sidebar">
     <div class="brand"><div class="brand-icon">HS</div><div><strong>HostStorm</strong><small>Broadcast Professional</small></div></div>
     <nav>
       <div class="nav-label">OPERAÇÃO</div>
       <a href="{{url_for('web.dashboard')}}" class="{% if request.endpoint=='web.dashboard' %}active{% endif %}">▦ <span>Dashboard</span></a>
-      <a href="{{url_for('web.lives')}}" class="{% if request.endpoint and request.endpoint.startswith('web.live') %}active{% endif %}">● <span>Lives</span></a>
-      <a href="{{url_for('web.schedules')}}" class="{% if request.endpoint and request.endpoint.startswith('web.schedule') %}active{% endif %}">▣ <span>Agendamentos</span></a>
+      <a href="{{url_for('web.lives')}}" class="{% if request.endpoint and request.endpoint.startswith('web.live') %}active{% endif %}">● <span>{{ 'Meus canais' if is_creator else 'Lives' }}</span></a>
+      <a href="{{url_for('web.schedules')}}" class="{% if request.endpoint and request.endpoint.startswith('web.schedule') %}active{% endif %}">▣ <span>{{ 'Meus agendamentos' if is_creator else 'Agendamentos' }}</span></a>
+      {% if not is_creator %}
       <a href="{{url_for('web.library')}}" class="{% if request.endpoint and request.endpoint.startswith('web.library') %}active{% endif %}">▤ <span>Biblioteca</span></a>
       <a href="{{url_for('web.history')}}" class="{% if request.endpoint=='web.history' %}active{% endif %}">↺ <span>Histórico</span></a>
       <a href="{{url_for('web.logs')}}" class="{% if request.endpoint and request.endpoint.startswith('web.log') %}active{% endif %}">⌘ <span>Logs</span></a>
@@ -49,12 +52,15 @@
       <a href="{{url_for('web.settings')}}" class="{% if request.endpoint and request.endpoint.startswith('web.settings') %}active{% endif %}">⚙ <span>Configurações</span></a>
       <a href="{{url_for('pro.integrations')}}" class="{% if request.endpoint and request.endpoint.startswith('pro.integration') %}active{% endif %}">∞ <span>Integrações</span></a>
       <a href="{{url_for('auth.users')}}" class="{% if request.endpoint=='auth.users' %}active{% endif %}">♙ <span>Usuários</span></a>
+      {% endif %}
       <a href="{{url_for('auth.two_factor')}}" class="{% if request.endpoint=='auth.two_factor' or (request.endpoint and request.endpoint.startswith('passkey.')) %}active{% endif %}">⌾ <span>2FA & Passkeys</span></a>
+      {% if not is_creator %}
       <a href="{{url_for('pro.tokens')}}" class="{% if request.endpoint=='pro.tokens' %}active{% endif %}">⌘ <span>API Tokens</span></a>
       <a href="{{url_for('pro.backups')}}" class="{% if request.endpoint=='pro.backups' %}active{% endif %}">⧉ <span>Backups</span></a>
       <a href="{{url_for('pro.updater')}}" class="{% if request.endpoint=='pro.updater' %}active{% endif %}">⇧ <span>Atualizações</span></a>
+      {% endif %}
     </nav>
-    <div class="sidebar-footer"><div><span class="dot online"></span> Control plane ativo</div><small>v{{app_version}}</small><a class="logout-link" href="{{url_for('auth.logout')}}">Sair</a></div>
+    <div class="sidebar-footer"><div><span class="dot online"></span> Control plane ativo</div><small>v{{app_version}}</small>{% if is_creator %}<small>Criador</small>{% endif %}<a class="logout-link" href="{{url_for('auth.logout')}}">Sair</a></div>
   </aside>
   <main class="main-area">
     <header class="topbar"><button class="menu-button" id="menuButton">☰</button><div><h1>{% block heading %}HostStorm{% endblock %}</h1><p>{% block subheading %}{% endblock %}</p></div><div class="topbar-right"><span class="pro-badge">PRO</span><div class="topbar-clock">🇧🇷 {{now_br}}</div></div></header>
