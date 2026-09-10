@@ -13,6 +13,30 @@ auth_bp=Blueprint('auth',__name__)
 PUBLIC_ENDPOINTS={'auth.login','web.healthz','static'}
 PUBLIC_WEBHOOK_PATHS={'/api/ai/kick/webhook','/api/kick/webhook'}
 VALID_ROLES={'viewer','operator','admin'}
+SAFE_METHODS={'GET','HEAD','OPTIONS'}
+OPERATOR_ADMIN_ENDPOINTS={
+    'web.live_create','web.live_save','web.live_delete','web.schedule_delete',
+    'web.library_upload','web.library_delete','web.settings','auth.users','auth.user_save','auth.user_delete',
+}
+
+
+def _enforce_role_access(user):
+    role=str((user or {}).get('role') or 'viewer')
+    endpoint=str(request.endpoint or '')
+    if role=='admin':
+        return None
+    # Visualizadores são realmente somente leitura, mas continuam podendo sair e
+    # administrar os próprios fatores de autenticação.
+    if role=='viewer' and request.method not in SAFE_METHODS:
+        if endpoint in {'auth.logout','auth.two_factor'} or endpoint.startswith('passkey.'):
+            return None
+        abort(403)
+    # Operadores podem iniciar/parar lives e executar/editar a agenda, mas não podem
+    # excluir canais, apagar mídia nem alterar segurança/configuração global.
+    if role=='operator' and endpoint in OPERATOR_ADMIN_ENDPOINTS:
+        abort(403)
+    return None
+
 
 @auth_bp.before_app_request
 def load_identity():
@@ -26,7 +50,7 @@ def load_identity():
     user=get_user(uid) if uid else None
     if user and user.get('enabled'):
         g.user=user
-        return None
+        return _enforce_role_access(user)
     # API bearer authentication is resolved in pro_web to support scoped tokens.
     if request.path.startswith('/api/v1/'):
         return None
