@@ -12,12 +12,18 @@ auth_bp=Blueprint('auth',__name__)
 
 PUBLIC_ENDPOINTS={'auth.login','web.healthz','static'}
 PUBLIC_WEBHOOK_PATHS={'/api/ai/kick/webhook','/api/kick/webhook'}
-VALID_ROLES={'viewer','operator','admin'}
+VALID_ROLES={'viewer','creator','operator','admin'}
 SAFE_METHODS={'GET','HEAD','OPTIONS'}
 OPERATOR_ADMIN_ENDPOINTS={
     'web.live_create','web.live_save','web.live_delete','web.schedule_delete',
     'web.library_upload','web.library_delete','web.settings','auth.users','auth.user_save','auth.user_delete',
 }
+CREATOR_BLOCKED_PREFIXES=(
+    'pro.','ops.','ai.','automation.','compat.',
+    'web.settings','web.library','web.history','web.log',
+    'auth.user',
+)
+CREATOR_BLOCKED_ENDPOINTS={'urlmedia.library_import_url'}
 
 
 def _enforce_role_access(user):
@@ -31,6 +37,13 @@ def _enforce_role_access(user):
         if endpoint in {'auth.logout','auth.two_factor'} or endpoint.startswith('passkey.'):
             return None
         abort(403)
+    # O criador administra somente os próprios canais/agendas. Recursos globais,
+    # automação de infraestrutura, IA, usuários e configurações continuam exclusivos
+    # dos papéis operacionais/administrativos apropriados.
+    if role=='creator':
+        if endpoint in CREATOR_BLOCKED_ENDPOINTS or endpoint.startswith(CREATOR_BLOCKED_PREFIXES):
+            abort(403)
+        return None
     # Operadores podem iniciar/parar lives e executar/editar a agenda, mas não podem
     # excluir canais, apagar mídia nem alterar segurança/configuração global.
     if role=='operator' and endpoint in OPERATOR_ADMIN_ENDPOINTS:
