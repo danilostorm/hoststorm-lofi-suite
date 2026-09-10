@@ -1,22 +1,115 @@
 {% extends 'base.html' %}
-{% block title %}Agendamentos • HostStorm{% endblock %}
-{% block heading %}Agendamentos{% endblock %}
-{% block subheading %}Calendário semanal com arquivos locais ou fontes por URL/YouTube.{% endblock %}
+{% block title %}Agenda • HostStorm{% endblock %}
+{% block heading %}Agenda{% endblock %}
+{% block subheading %}Programação organizada por data, canal e plataforma.{% endblock %}
 {% block content %}
+<style>
+.schedule-toolbar{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:18px}.schedule-toolbar .grow{flex:1 1 260px}.schedule-toolbar input,.schedule-toolbar select{width:100%}.schedule-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:18px}.schedule-stat{padding:16px;border:1px solid var(--border,#253047);border-radius:14px;background:rgba(255,255,255,.025)}.schedule-stat strong{display:block;font-size:1.55rem}.schedule-stat small{opacity:.7}.schedule-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 18px}.schedule-tab{border:1px solid var(--border,#253047);background:transparent;color:inherit;border-radius:999px;padding:8px 13px;cursor:pointer}.schedule-tab.active{background:rgba(82,130,255,.16);border-color:#527fff}.agenda-date{margin:20px 0 10px;display:flex;align-items:center;gap:12px}.agenda-date:after{content:"";height:1px;background:var(--border,#253047);flex:1}.agenda-date span{opacity:.65;font-size:.85rem}.agenda-grid{display:grid;gap:10px}.agenda-card{display:grid;grid-template-columns:88px minmax(0,1fr) auto;gap:14px;align-items:center;padding:15px 16px;border:1px solid var(--border,#253047);border-radius:14px;background:rgba(255,255,255,.025);text-decoration:none;color:inherit}.agenda-card:hover{border-color:#527fff;background:rgba(82,127,255,.06)}.agenda-time{font-size:1.4rem;font-weight:800}.agenda-main{min-width:0}.agenda-main h3{margin:2px 0 5px;font-size:1rem}.agenda-main p{margin:0;opacity:.72;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.agenda-meta{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px}.agenda-pill{font-size:.73rem;border:1px solid var(--border,#253047);border-radius:999px;padding:4px 8px;opacity:.9}.agenda-pill.live{border-color:#2fbf71;color:#67e39c}.agenda-pill.off{opacity:.5}.agenda-channel{font-weight:700}.agenda-side{text-align:right;max-width:280px}.agenda-side small{display:block;opacity:.62;margin-top:5px}.agenda-empty{padding:36px;text-align:center;border:1px dashed var(--border,#253047);border-radius:14px;opacity:.7}.agenda-group{margin-bottom:18px}.agenda-channel-head{font-weight:800;margin:18px 0 8px}.schedule-source{display:none}@media(max-width:850px){.schedule-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.agenda-card{grid-template-columns:72px minmax(0,1fr)}.agenda-side{grid-column:2;text-align:left;max-width:none}}@media(max-width:520px){.schedule-stats{grid-template-columns:1fr 1fr}.agenda-card{padding:13px}.agenda-time{font-size:1.15rem}}
+</style>
 <div class="page-actions"><a class="btn primary" href="{{ url_for('web.schedule_new') }}">+ Novo agendamento</a></div>
-<div class="week-calendar">
-{% for day in weekday_labels %}
-<section class="calendar-day"><header><strong>{{ day }}</strong><span>{{ days[loop.index0]|length }}</span></header><div class="calendar-items">
-{% for s in days[loop.index0] %}
-<a href="{{ url_for('web.schedule_edit',sid=s.id) }}" class="calendar-event {% if not s.enabled %}disabled{% endif %}">
-  <div class="calendar-event-top"><time>{{ s.time }}</time><span class="source-mini {{'remote' if s.source_mode=='url' else 'local'}}">{{'URL' if s.source_mode=='url' else 'LOCAL'}}</span></div>
-  <strong>{{ (channels.get(s.channel_id) or {}).get('name','Canal') }}</strong>
-  <small>{% if s.source_mode=='url' %}{{ s.name or s.source_title or s.source_url }}{% else %}{{ s.name or s.media|join(' → ') }}{% endif %}</small>
-  {% if s.source_mode=='url' and s.source_duration_seconds %}<small>⏱ {{ s.source_duration_seconds|duration_hms }} · encerra {{s.stop_before_seconds}}s antes</small>{% endif %}
-  <div class="platform-line">{% for p in s.platforms %}<span class="platform-chip">{{ p }}</span>{% endfor %}</div>
-</a>
-{% else %}<div class="calendar-empty">—</div>{% endfor %}
-</div></section>{% endfor %}
+
+<div class="schedule-stats">
+  <div class="schedule-stat"><strong id="statToday">0</strong><small>Hoje</small></div>
+  <div class="schedule-stat"><strong id="statUpcoming">0</strong><small>Próximos 30 dias</small></div>
+  <div class="schedule-stat"><strong>{{ schedules|selectattr('enabled')|list|length }}</strong><small>Agendas ativas</small></div>
+  <div class="schedule-stat"><strong>{{ channels|length }}</strong><small>Canais</small></div>
 </div>
-{% if special %}<div class="panel"><div class="panel-head"><div><h2>Datas únicas</h2><p>Transmissões fora da recorrência semanal.</p></div></div><div class="schedule-table">{% for s in special %}<a href="{{ url_for('web.schedule_edit',sid=s.id) }}"><span>{{ s.run_date }} {{ s.time }}</span><strong>{{ (channels.get(s.channel_id) or {}).get('name','Canal') }}</strong><small>{% if s.source_mode=='url' %}↗ {{s.source_title or s.source_url}}{% else %}{{ s.media|join(' → ') }}{% endif %}</small></a>{% endfor %}</div></div>{% endif %}
+
+<div class="panel">
+  <div class="schedule-toolbar">
+    <label class="grow">Buscar<input id="agendaSearch" type="search" placeholder="Canal, agenda, vídeo ou plataforma"></label>
+    <label>Canal<select id="agendaChannel"><option value="">Todos os canais</option>{% for cid,ch in channels.items() %}<option value="{{cid}}">{{ch.name}}</option>{% endfor %}</select></label>
+    <label>Plataforma<select id="agendaPlatform"><option value="">Todas</option><option value="kick">Kick</option><option value="youtube">YouTube</option><option value="youtube_shorts">YouTube Shorts</option><option value="twitch">Twitch</option><option value="kwai">Kwai</option><option value="custom">Custom RTMP</option></select></label>
+  </div>
+  <div class="schedule-tabs">
+    <button class="schedule-tab active" data-view="date" type="button">Por data</button>
+    <button class="schedule-tab" data-view="channel" type="button">Por canal</button>
+    <button class="schedule-tab" data-view="all" type="button">Todas as agendas</button>
+  </div>
+  <div id="agendaBoard"></div>
+</div>
+
+<div id="scheduleSources">
+{% for s in schedules %}
+  <div class="schedule-source"
+    data-id="{{s.id}}"
+    data-channel="{{s.channel_id}}"
+    data-channel-name="{{(channels.get(s.channel_id) or {}).get('name','Canal')}}"
+    data-name="{{s.name|e}}"
+    data-kind="{{s.kind}}"
+    data-weekdays="{{(s.weekdays or [])|join(',')}}"
+    data-time="{{s.time}}"
+    data-run-date="{{s.run_date or ''}}"
+    data-start-date="{{s.start_date or ''}}"
+    data-end-date="{{s.end_date or ''}}"
+    data-enabled="{{1 if s.enabled else 0}}"
+    data-platforms="{{(s.platforms or [])|join(',')}}"
+    data-source-mode="{{s.source_mode or 'library'}}"
+    data-source-title="{{(s.source_title or '')|e}}"
+    data-media="{{(s.media or [])|join('|||')|e}}"
+    data-playlist-count="{{s.youtube_playlist_count or 0}}"
+    data-last-status="{{(s.last_status or '')|e}}"
+    data-last-started="{{s.last_started_at or ''}}">
+  </div>
+{% endfor %}
+</div>
+
+<script>
+(()=>{
+ const board=document.getElementById('agendaBoard'); if(!board)return;
+ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+ const pad=n=>String(n).padStart(2,'0');
+ const iso=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+ const startToday=()=>{const d=new Date();return new Date(d.getFullYear(),d.getMonth(),d.getDate())};
+ const labels=['Domingo','Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado'];
+ const fmt=d=>`${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()}`;
+ const rows=[...document.querySelectorAll('.schedule-source')].map(el=>({
+   id:el.dataset.id,channel:el.dataset.channel,channelName:el.dataset.channelName,name:el.dataset.name||'Sem nome',kind:el.dataset.kind,
+   weekdays:(el.dataset.weekdays||'').split(',').filter(Boolean).map(Number),time:el.dataset.time||'--:--',runDate:el.dataset.runDate,
+   startDate:el.dataset.startDate,endDate:el.dataset.endDate,enabled:el.dataset.enabled==='1',platforms:(el.dataset.platforms||'').split(',').filter(Boolean),
+   sourceMode:el.dataset.sourceMode,sourceTitle:el.dataset.sourceTitle,media:(el.dataset.media||'').split('|||').filter(Boolean),playlistCount:Number(el.dataset.playlistCount||0),
+   lastStatus:el.dataset.lastStatus,lastStarted:el.dataset.lastStarted
+ }));
+ function applies(s,d){
+   const key=iso(d); if(s.startDate&&key<s.startDate)return false;if(s.endDate&&key>s.endDate)return false;
+   const wd=(d.getDay()+6)%7;
+   if(s.kind==='once')return s.runDate===key;
+   if(s.kind==='daily')return true;
+   if(s.kind==='weekdays')return wd<5;
+   return s.weekdays.includes(wd);
+ }
+ function occurrences(){
+   const begin=startToday(), end=new Date(begin); end.setDate(end.getDate()+30); const out=[];
+   rows.forEach(s=>{if(!s.enabled)return;for(let d=new Date(begin);d<=end;d.setDate(d.getDate()+1)){if(applies(s,d))out.push({...s,date:new Date(d),dateKey:iso(d)})}});
+   return out.sort((a,b)=>(a.dateKey+a.time).localeCompare(b.dateKey+b.time));
+ }
+ const typeLabel=s=>s.sourceMode==='youtube_playlist'?`YouTube Playlist${s.playlistCount?` · ${s.playlistCount} vídeos`:''}`:s.sourceMode==='url'?'URL / YouTube':s.media.length>1?`Playlist local · ${s.media.length} vídeos`:'Arquivo local';
+ const sourceLabel=s=>s.sourceTitle||s.media[0]||'Fonte não informada';
+ const pLabel=p=>({youtube:'YouTube',youtube_shorts:'YouTube Shorts',twitch:'Twitch',kick:'Kick',kwai:'Kwai',custom:'Custom RTMP'}[p]||p);
+ function card(s){
+   return `<a class="agenda-card" href="/schedules/${encodeURIComponent(s.id)}/edit" data-search="${esc((s.channelName+' '+s.name+' '+sourceLabel(s)+' '+s.platforms.join(' ')).toLowerCase())}" data-channel="${esc(s.channel)}" data-platforms="${esc(s.platforms.join(','))}">
+     <div class="agenda-time">${esc(s.time)}</div><div class="agenda-main"><div class="agenda-channel">${esc(s.channelName)}</div><h3>${esc(s.name)}</h3><p>${esc(sourceLabel(s))}</p><div class="agenda-meta"><span class="agenda-pill">${esc(typeLabel(s))}</span>${s.platforms.map(p=>`<span class="agenda-pill">${esc(pLabel(p))}</span>`).join('')}</div></div>
+     <div class="agenda-side"><span class="agenda-pill ${s.enabled?'live':'off'}">${s.enabled?'ATIVA':'PAUSADA'}</span>${s.lastStatus?`<small>${esc(s.lastStatus)}</small>`:''}</div></a>`;
+ }
+ let view='date'; const occ=occurrences();
+ document.getElementById('statUpcoming').textContent=occ.length;document.getElementById('statToday').textContent=occ.filter(x=>x.dateKey===iso(startToday())).length;
+ function render(){
+   if(view==='all'){
+     const ordered=[...rows].sort((a,b)=>(a.channelName+a.time).localeCompare(b.channelName+b.time));
+     board.innerHTML=ordered.length?`<div class="agenda-grid">${ordered.map(s=>card({...s,date:null,dateKey:''})).join('')}</div>`:'<div class="agenda-empty">Nenhum agendamento cadastrado.</div>';
+   }else if(view==='channel'){
+     const groups={};occ.forEach(x=>(groups[x.channelName]??=[]).push(x));
+     board.innerHTML=Object.keys(groups).sort().map(name=>`<div class="agenda-group"><div class="agenda-channel-head">${esc(name)}</div><div class="agenda-grid">${groups[name].map(x=>card(x)).join('')}</div></div>`).join('')||'<div class="agenda-empty">Nenhuma transmissão nos próximos 30 dias.</div>';
+   }else{
+     const groups={};occ.forEach(x=>(groups[x.dateKey]??=[]).push(x));
+     board.innerHTML=Object.keys(groups).sort().map(key=>{const arr=groups[key],d=arr[0].date;return `<div class="agenda-group"><div class="agenda-date"><strong>${fmt(d)}</strong><span>${labels[d.getDay()]} · ${arr.length} transmissão(ões)</span></div><div class="agenda-grid">${arr.map(x=>card(x)).join('')}</div></div>`}).join('')||'<div class="agenda-empty">Nenhuma transmissão nos próximos 30 dias.</div>';
+   }
+   filter();
+ }
+ function filter(){const q=(document.getElementById('agendaSearch').value||'').toLowerCase().trim(),ch=document.getElementById('agendaChannel').value,p=document.getElementById('agendaPlatform').value;document.querySelectorAll('.agenda-card').forEach(el=>{const okQ=!q||el.dataset.search.includes(q),okC=!ch||el.dataset.channel===ch,okP=!p||(el.dataset.platforms||'').split(',').includes(p);el.hidden=!(okQ&&okC&&okP)});document.querySelectorAll('.agenda-group').forEach(g=>{g.hidden=![...g.querySelectorAll('.agenda-card')].some(x=>!x.hidden)})}
+ document.querySelectorAll('.schedule-tab').forEach(b=>b.onclick=()=>{document.querySelectorAll('.schedule-tab').forEach(x=>x.classList.remove('active'));b.classList.add('active');view=b.dataset.view;render()});
+ ['agendaSearch','agendaChannel','agendaPlatform'].forEach(id=>document.getElementById(id)?.addEventListener(id==='agendaSearch'?'input':'change',filter));
+ render();
+})();
+</script>
 {% endblock %}

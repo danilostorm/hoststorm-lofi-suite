@@ -24,6 +24,7 @@ def create_app():
     from .live_url_guard import install_live_url_guard
     from .youtube_playlist import install_youtube_playlist, playlist_bp
     from .parallel_schedules import install_parallel_schedules
+    from .seamless_playlist import install_seamless_youtube_playlist
 
     app = Flask(__name__, template_folder='../templates', static_folder='../static')
     app.secret_key = os.environ.get('HOSTSTORM_SECRET_KEY') or os.environ.get('LV2_ADMIN_PASSWORD') or os.urandom(32)
@@ -70,6 +71,9 @@ def create_app():
     install_youtube_playlist(app, db_module, legacy_web, scheduler_module, streaming_module.MANAGER, streaming_module)
     # v4.1: different destinations of the same HostStorm channel may run independently.
     install_parallel_schedules(streaming_module.MANAGER, streaming_module, db_module)
+    # v4.2: playlist item switches happen behind a persistent local bridge. The RTMP
+    # publisher remains connected while only the feeder process changes source videos.
+    install_seamless_youtube_playlist(streaming_module.MANAGER, streaming_module, db_module)
 
     # Compatibilidade do módulo web profissional: list_backups pertence a professional.py.
     from . import pro_db as pro_db_module
