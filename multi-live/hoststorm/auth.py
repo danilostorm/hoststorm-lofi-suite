@@ -5,13 +5,14 @@ from functools import wraps
 
 from flask import Blueprint, abort, flash, g, redirect, render_template, request, session, url_for
 
-from .pro_db import get_user, get_user_by_username, list_users, save_user, set_totp, touch_login, user_totp_secret
+from .pro_db import connect, get_user, get_user_by_username, list_users, save_user, set_totp, touch_login, user_totp_secret
 from .security import LOGIN_LIMITER, new_totp_secret, role_allows, totp_uri, verify_password, verify_totp
 
 auth_bp=Blueprint('auth',__name__)
 
 PUBLIC_ENDPOINTS={'auth.login','web.healthz','static'}
 PUBLIC_WEBHOOK_PATHS={'/api/ai/kick/webhook','/api/kick/webhook'}
+VALID_ROLES={'viewer','operator','admin'}
 
 @auth_bp.before_app_request
 def load_identity():
@@ -76,10 +77,53 @@ def users():
 @require_role('admin')
 def user_save():
     uid=request.form.get('id') or None
+    username=request.form.get('username','').strip()
+    role=request.form.get('role','viewer').strip().lower()
+    password=request.form.get('password','')
+    enabled=request.form.get('enabled')=='on'
     try:
-        save_user(request.form.get('username','').strip(),request.form.get('role','viewer'),request.form.get('password',''),uid,request.form.get('enabled')=='on')
+        if not username or len(username)<3 or len(username)>64:
+            raise ValueError('O usuário precisa ter entre 3 e 64 caracteres.')
+        if role not in VALID_ROLES:
+            raise ValueError('Papel de usuário inválido.')
+        if not uid and len(password)<8:
+            raise ValueError('Novo usuário precisa de senha com pelo menos 8 caracteres.')
+        if uid and password and len(password)<8:
+            raise ValueError('A nova senha precisa ter pelo menos 8 caracteres.')
+        current=get_user(uid) if uid else None
+        if current and current.get('id')==getattr(g,'user',{}).get('id') and not enabled:
+            raise ValueError('Você não pode bloquear a própria conta.')
+        if current and current.get('role')=='admin' and role!='admin':
+            with connect() as con:
+                admins=con.execute("SELECT COUNT(*) n FROM users WHERE role='admin' AND enabled=1").fetchone()['n']
+            if int(admins or 0)<=1:
+                raise ValueError('É obrigatório manter pelo menos um administrador ativo.')
+        save_user(username,role,password,uid,enabled)
         flash('Usuário salvo.','success')
-    except Exception as e: flash(str(e),'error')
+    except Exception as e:
+        flash(str(e),'error')
+    return redirect(url_for('auth.users'))
+
+@auth_bp.route('/security/users/<uid>/delete',methods=['POST'])
+@require_role('admin')
+def user_delete(uid):
+    try:
+        current=getattr(g,'user',{}) or {}
+        if uid==current.get('id'):
+            raise ValueError('Você não pode excluir a própria conta.')
+        target=get_user(uid)
+        if not target:
+            raise ValueError('Usuário não encontrado.')
+        if target.get('role')=='admin' and target.get('enabled'):
+            with connect() as con:
+                admins=con.execute("SELECT COUNT(*) n FROM users WHERE role='admin' AND enabled=1").fetchone()['n']
+            if int(admins or 0)<=1:
+                raise ValueError('É obrigatório manter pelo menos um administrador ativo.')
+        with connect() as con:
+            con.execute('DELETE FROM users WHERE id=?',(uid,))
+        flash('Usuário excluído.','success')
+    except Exception as e:
+        flash(str(e),'error')
     return redirect(url_for('auth.users'))
 
 @auth_bp.route('/security/2fa',methods=['GET','POST'])
