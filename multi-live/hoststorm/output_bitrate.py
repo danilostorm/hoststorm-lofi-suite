@@ -23,7 +23,6 @@ def _fps(channel: dict) -> int:
 def _resolution(channel: dict, slug: str, destination: dict | None = None) -> str:
     kind = _kind(slug, destination)
     if kind == 'youtube_shorts' or (kind == 'kwai' and str((destination or {}).get('mode') or '') == 'vertical'):
-        # Current HostStorm vertical pipeline is 1080x1920.
         return '1080x1920'
     return str(channel.get('resolution') or '1920x1080')
 
@@ -37,9 +36,6 @@ def youtube_recommended_k(channel: dict, slug: str, destination: dict | None = N
     short_side = min(width, height)
     long_side = max(width, height)
     fps = _fps(channel)
-    # H.264 live recommendations from YouTube Help (Sep/2026):
-    # 720p30 4 Mbps, 720p60 6 Mbps, 1080p30 10 Mbps, 1080p60 12 Mbps,
-    # 1440p30 15 Mbps, 1440p60 24 Mbps, 2160p30 30 Mbps, 2160p60 35 Mbps.
     if short_side <= 720 and long_side <= 1280:
         return 6000 if fps == 60 else 4000
     if short_side <= 1080 and long_side <= 1920:
@@ -61,8 +57,6 @@ def bitrate_mode(destination: dict | None) -> str:
     raw = str(destination.get('output_bitrate_mode') or '').strip().lower()
     if raw in BITRATE_MODES:
         return raw
-    # Existing YouTube outputs opt into the safer automatic live recommendation.
-    # Other platforms preserve the old channel-level behaviour.
     return 'auto' if _kind('', destination) in {'youtube', 'youtube_shorts'} else 'inherit'
 
 
@@ -84,21 +78,25 @@ def target_bitrate_k(channel: dict, slug: str, destination: dict | None = None) 
     return inherited_k(channel, slug, destination)
 
 
+def _output_insert_index(cmd: list[str]) -> int:
+    positions = [i for i, token in enumerate(cmd) if token == '-f']
+    if positions:
+        return positions[-1]
+    return max(0, len(cmd) - 1)
+
+
 def _replace_arg(cmd: list[str], flag: str, value: str):
     if flag in cmd:
         idx = cmd.index(flag)
         if idx + 1 < len(cmd):
             cmd[idx + 1] = value
             return
-    try:
-        insert_at = cmd.index('-f')
-    except ValueError:
-        insert_at = max(0, len(cmd) - 1)
+    insert_at = _output_insert_index(cmd)
     cmd[insert_at:insert_at] = [flag, value]
 
 
 def enforce_cbr(cmd: list[str], target_k: int) -> list[str]:
-    """Make RTMP bitrate stable instead of allowing x264 ABR to fall far below target."""
+    """Make live RTMP bitrate stable instead of allowing ABR to fall far below target."""
     cmd = list(cmd)
     rate = f'{int(target_k)}k'
     _replace_arg(cmd, '-b:v', rate)
@@ -119,10 +117,7 @@ def enforce_cbr(cmd: list[str], target_k: int) -> list[str]:
             if 'nal-hrd=' not in current:
                 cmd[idx + 1] = (current + ':' + params).strip(':')
         else:
-            try:
-                insert_at = cmd.index('-f')
-            except ValueError:
-                insert_at = max(0, len(cmd) - 1)
+            insert_at = _output_insert_index(cmd)
             cmd[insert_at:insert_at] = ['-x264-params', params]
     elif encoder == 'h264_nvenc':
         _replace_arg(cmd, '-rc', 'cbr')
@@ -137,7 +132,6 @@ def install_output_bitrate(manager):
         destination = ((session.work_channel or {}).get('destinations') or {}).get(slug) or {}
         target = target_bitrate_k(session.work_channel or {}, slug, destination)
         kind = _kind(slug, destination)
-        # RTMP live platforms expect a stable bitrate; YouTube explicitly recommends CBR.
         if kind in {'youtube', 'youtube_shorts', 'kick', 'twitch', 'kwai', 'custom'}:
             cmd = enforce_cbr(cmd, target)
         return cmd
