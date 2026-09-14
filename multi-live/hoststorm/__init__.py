@@ -29,6 +29,7 @@ def create_app():
     from .multi_output import install_multi_output
     from .multi_output_api import multi_output_api_bp
     from .output_sources import install_output_sources
+    from .output_bitrate import install_output_bitrate
 
     app = Flask(__name__, template_folder='../templates', static_folder='../static')
     app.secret_key = os.environ.get('HOSTSTORM_SECRET_KEY') or os.environ.get('LV2_ADMIN_PASSWORD') or os.urandom(32)
@@ -62,33 +63,22 @@ def create_app():
 
     install_schedule_platform_guard(streaming_module.MANAGER, streaming_module)
 
-    # Keep the fully-featured pre-recovery platform launcher. YouTube playlists and
-    # parallel sidecar schedules need item-aware checkpoints rather than the old
-    # channel-wide seek wrapper, but still need profiles, overlays, URL resilience and TTS.
     streaming_module.MANAGER._hs_pre_recovery_start_platform = streaming_module.MANAGER._start_platform
 
     install_recovery_engine(streaming_module.MANAGER, streaming_module, db_module)
     install_recovery_retry(streaming_module.MANAGER, streaming_module, db_module)
     install_live_url_guard(streaming_module.MANAGER, streaming_module)
 
-    # v4.1: real YouTube playlists are item-aware and can resume at the correct item/time.
     install_youtube_playlist(app, db_module, legacy_web, scheduler_module, streaming_module.MANAGER, streaming_module)
-    # v4.1: different destinations of the same HostStorm channel may run independently.
     install_parallel_schedules(streaming_module.MANAGER, streaming_module, db_module)
-    # v4.2: playlist item switches happen behind a persistent local bridge. The RTMP
-    # publisher remains connected while only the feeder process changes source videos.
     install_seamless_youtube_playlist(streaming_module.MANAGER, streaming_module, db_module)
-    # v4.3: creator accounts own their channels and schedules. Request-scoped filters are
-    # installed after all DB/streaming wrappers so background schedulers still see everything.
     install_creator_tenancy(db_module, legacy_web, streaming_module, scheduler_module)
-    # v4.4: one channel may expose multiple instances of the same destination (for example
-    # four YouTube Shorts keys), each with independent start/stop plus manual rerun offsets.
     install_multi_output(app, db_module, legacy_web, streaming_module)
-    # v4.5: each RTMP output may inherit the channel source or select its own Library video
-    # or external URL. Source overrides apply only to manual runs; schedules keep their media.
     install_output_sources(app, legacy_web, streaming_module)
+    # v4.6: final command wrapper applies an independent bitrate policy to every RTMP
+    # destination and enforces stable CBR after source/multi-output wrappers are resolved.
+    install_output_bitrate(streaming_module.MANAGER)
 
-    # Compatibilidade do módulo web profissional: list_backups pertence a professional.py.
     from . import pro_db as pro_db_module
     from .professional import list_backups as professional_list_backups
     pro_db_module.list_backups = professional_list_backups
