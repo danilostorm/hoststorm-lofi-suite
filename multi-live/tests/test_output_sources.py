@@ -1,3 +1,5 @@
+from flask import Flask
+
 import hoststorm.output_sources as output_sources
 
 
@@ -61,3 +63,58 @@ def test_rtmp_external_source_is_supported():
     })
     assert ok is True
     assert message == ''
+
+
+def test_start_form_persists_selected_library_source_and_new_stream_key(tmp_path, monkeypatch):
+    monkeypatch.setattr(output_sources, 'VIDEOS_DIR', tmp_path)
+    (tmp_path / 'Mortal Kombat II.mp4').write_bytes(b'test')
+    channel = {
+        'destinations': {
+            'youtube_shorts__mk2': {
+                'label': 'Mortal Kombat 2',
+                'rtmp_url': 'rtmp://a.rtmp.youtube.com/live2',
+                'stream_key': 'old-key',
+                'output_source_mode': 'channel',
+            }
+        }
+    }
+    app = Flask(__name__)
+    with app.test_request_context(method='POST', data={
+        'mode': 'local',
+        'video': 'Mortal Kombat II.mp4',
+        'url': '',
+        'rtmp_url': 'rtmp://a.rtmp.youtube.com/live2',
+        'stream_key': 'new-key',
+    }):
+        updated, error = output_sources._update_destination_from_form(
+            channel, 'youtube_shorts__mk2', include_transport=True,
+        )
+    assert error == ''
+    assert updated['output_source_mode'] == 'local'
+    assert updated['output_source_video'] == 'Mortal Kombat II.mp4'
+    assert updated['stream_key'] == 'new-key'
+
+
+def test_start_form_keeps_saved_stream_key_when_password_field_is_blank(tmp_path, monkeypatch):
+    monkeypatch.setattr(output_sources, 'VIDEOS_DIR', tmp_path)
+    (tmp_path / 'live.mp4').write_bytes(b'test')
+    channel = {
+        'destinations': {
+            'youtube_shorts__saved': {
+                'rtmp_url': 'rtmp://a.rtmp.youtube.com/live2',
+                'stream_key': 'encrypted-existing-key',
+            }
+        }
+    }
+    app = Flask(__name__)
+    with app.test_request_context(method='POST', data={
+        'mode': 'local',
+        'video': 'live.mp4',
+        'rtmp_url': 'rtmp://a.rtmp.youtube.com/live2',
+        'stream_key': '',
+    }):
+        updated, error = output_sources._update_destination_from_form(
+            channel, 'youtube_shorts__saved', include_transport=True,
+        )
+    assert error == ''
+    assert updated['stream_key'] == 'encrypted-existing-key'
