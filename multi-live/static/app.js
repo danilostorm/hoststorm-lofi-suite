@@ -55,14 +55,14 @@
   let catalogPayload=null;
   let lastStatusPayload=null;
 
-  const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]));
   const fmtTime=seconds=>{seconds=Math.max(0,Math.floor(Number(seconds)||0));const h=Math.floor(seconds/3600),m=Math.floor((seconds%3600)/60),s=seconds%60;return h?`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`:`${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`};
   const post=async(url,data=null)=>{const opt={method:'POST',headers:{'X-Requested-With':'HostStorm'}};if(data){opt.body=data}const r=await fetch(url,opt);if(!r.ok)throw new Error(`HTTP ${r.status}`);return r;};
 
   async function loadOutputCatalog(force=false){
     if(catalogPayload&&!force)return catalogPayload;
     try{const r=await fetch('/api/output-labels',{cache:'no-store'});if(r.ok)catalogPayload=await r.json();}catch(_){ }
-    return catalogPayload||{channels:{},settings:{}};
+    return catalogPayload||{channels:{}};
   }
 
   function injectMultiOutputStyles(){
@@ -83,7 +83,11 @@
     const panel=grid.closest('section');if(panel)panel.id='destinos';
     const catalog=await loadOutputCatalog();
     const channelCatalog=(catalog.channels||{})[currentLiveId]||{};
-    const channelSettings=(catalog.settings||{})[currentLiveId]||{};
+    let channelSettings={};
+    try{
+      const settingsResponse=await fetch(`/api/output-settings/${encodeURIComponent(currentLiveId)}`,{cache:'no-store'});
+      if(settingsResponse.ok)channelSettings=await settingsResponse.json();
+    }catch(_){ }
 
     if(panel&&!$('.hs-output-toolbar',panel)){
       const bar=document.createElement('div');bar.className='hs-output-toolbar';
@@ -257,7 +261,6 @@
     });
   }
   setupPushButton().catch(()=>{});
-
   mountLiveOutputControls().catch(console.error);
   enhanceAgendaLabels().catch(()=>{});
   refreshStatus();
