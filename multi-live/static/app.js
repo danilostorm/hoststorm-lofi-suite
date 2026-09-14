@@ -156,17 +156,21 @@
   function paintScheduleProgress(payload){
     const board=$('#agendaBoard');if(!board)return;
     injectMultiOutputStyles();
-    $$('.hs-schedule-progress',board).forEach(x=>x.remove());
     const runs=activeScheduleRuns(payload),now=Date.now();
+    $$('.hs-schedule-progress',board).forEach(el=>{
+      const sid=String(el.dataset.scheduleProgress||'');
+      if(!sid||!runs.has(sid))el.remove();
+    });
     runs.forEach((run,sid)=>{
       const cards=$$(`.agenda-card[href="/schedules/${CSS.escape(sid)}/edit"],.agenda-card[href$="/schedules/${CSS.escape(sid)}/edit"]`,board).filter(x=>!x.hidden);
       const card=cards[0]||$$('.agenda-card',board).find(x=>x.getAttribute('href')?.includes(`/schedules/${sid}/edit`));if(!card)return;
       const main=$('.agenda-main',card);if(!main)return;
       const start=Date.parse(run.startedAt||''),stop=Date.parse(run.stopAt||'');const elapsed=Number.isFinite(start)?Math.max(0,(now-start)/1000):0;const total=Number.isFinite(start)&&Number.isFinite(stop)&&stop>start?(stop-start)/1000:0;const pct=total?Math.max(0,Math.min(100,elapsed/total*100)):0;
       const platforms=Object.values(run.platforms||{}).filter(x=>x.running).map(x=>x.label).filter(Boolean);
-      const div=document.createElement('div');div.className='hs-schedule-progress';div.dataset.scheduleProgress=sid;
-      div.innerHTML=`<div class="hs-schedule-progress-head"><strong>● AO VIVO AGORA</strong><span>${total?`${pct.toFixed(1)}% · ${fmtTime(elapsed)} / ${fmtTime(total)}`:`${fmtTime(elapsed)} ao vivo`}</span></div>${total?`<div class="hs-progress-track"><div class="hs-progress-fill" style="width:${pct.toFixed(2)}%"></div></div>`:''}<div class="hs-progress-extra">${platforms.length?esc(platforms.join(' • '))+' · ':''}${Number.isFinite(stop)?`termina ${new Date(stop).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`:'sem horário final definido'}</div>`;
-      main.appendChild(div);
+      const html=`<div class="hs-schedule-progress-head"><strong>● AO VIVO AGORA</strong><span>${total?`${pct.toFixed(1)}% · ${fmtTime(elapsed)} / ${fmtTime(total)}`:`${fmtTime(elapsed)} ao vivo`}</span></div>${total?`<div class="hs-progress-track"><div class="hs-progress-fill" style="width:${pct.toFixed(2)}%"></div></div>`:''}<div class="hs-progress-extra">${platforms.length?esc(platforms.join(' • '))+' · ':''}${Number.isFinite(stop)?`termina ${new Date(stop).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`:'sem horário final definido'}</div>`;
+      let div=$$('.hs-schedule-progress',main).find(x=>String(x.dataset.scheduleProgress||'')===String(sid));
+      if(!div){div=document.createElement('div');div.className='hs-schedule-progress';div.dataset.scheduleProgress=sid;main.appendChild(div);}
+      if(div.innerHTML!==html)div.innerHTML=html;
     });
   }
 
@@ -176,8 +180,25 @@
     const all={};Object.values(catalog.channels||{}).forEach(destinations=>Object.entries(destinations||{}).forEach(([slug,meta])=>{all[slug]=meta;}));
     const select=$('#agendaPlatform');
     if(select){Object.entries(all).filter(([,meta])=>meta.extra).forEach(([slug,meta])=>{if(!select.querySelector(`option[value="${CSS.escape(slug)}"]`)){const o=document.createElement('option');o.value=slug;o.textContent=meta.label;select.appendChild(o);}});}
-    const relabel=()=>{$$('.agenda-pill',board).forEach(p=>{const raw=p.textContent.trim();if(all[raw])p.textContent=all[raw].label;else if(raw.includes('__')){const base=raw.split('__')[0];const labels={youtube:'YouTube',youtube_shorts:'YouTube Shorts',kick:'Kick',twitch:'Twitch',kwai:'Kwai',custom:'Custom RTMP'};p.textContent=labels[base]||raw;}});};
-    relabel();new MutationObserver(()=>{relabel();if(lastStatusPayload)paintScheduleProgress(lastStatusPayload);}).observe(board,{childList:true,subtree:true});
+    const labels={youtube:'YouTube',youtube_shorts:'YouTube Shorts',kick:'Kick',twitch:'Twitch',kwai:'Kwai',custom:'Custom RTMP'};
+    const relabel=()=>{$$('.agenda-pill',board).forEach(p=>{
+      const raw=p.textContent.trim();let target='';
+      if(all[raw])target=all[raw].label;
+      else if(raw.includes('__'))target=labels[raw.split('__')[0]]||raw;
+      if(target&&target!==raw)p.textContent=target;
+    });};
+    relabel();
+    let queued=false;
+    new MutationObserver(mutations=>{
+      const relevant=mutations.some(m=>[...m.addedNodes].some(n=>n.nodeType===1&&(n.matches?.('.agenda-card,.agenda-pill,.agenda-group')||n.querySelector?.('.agenda-pill'))));
+      if(!relevant||queued)return;
+      queued=true;
+      requestAnimationFrame(()=>{
+        queued=false;
+        relabel();
+        if(lastStatusPayload)paintScheduleProgress(lastStatusPayload);
+      });
+    }).observe(board,{childList:true,subtree:true});
   }
 
   async function refreshStatus(){
