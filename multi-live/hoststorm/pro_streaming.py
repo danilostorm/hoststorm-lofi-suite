@@ -39,6 +39,13 @@ def _duration_file(path):
     try:return float(subprocess.check_output(['ffprobe','-v','error','-show_entries','format=duration','-of','default=nw=1:nk=1',str(path)],text=True,timeout=15).strip() or 0)
     except Exception:return 0
 
+def _cmd_value(cmd, flag, default=''):
+    try:
+        idx=list(cmd or []).index(flag)
+        return str(cmd[idx+1]) if idx+1<len(cmd) else str(default)
+    except Exception:
+        return str(default)
+
 
 def install_professional_streaming(manager,streaming_module):
     original_build=manager._build_cmd;original_input=manager._input_args;original_status=manager.channel_status;original_start=manager.start;original_stop=manager.stop
@@ -73,7 +80,11 @@ def install_professional_streaming(manager,streaming_module):
         session.encoder=encoder;return cmd
 
     def telemetry_reader(self,session,ps,proc,log_handle):
-        metrics={'fps':0.0,'bitrate_k':0.0,'speed':0.0,'dropped_frames':0,'quality':'unknown','updated_at':''};last_save=0.0;last_alert=0.0;expected=float(session.work_channel.get('fps') or 30);target=parse_bitrate_k(session.work_channel.get('video_bitrate'),4500)
+        metrics={'fps':0.0,'bitrate_k':0.0,'speed':0.0,'dropped_frames':0,'quality':'unknown','updated_at':''};last_save=0.0;last_alert=0.0
+        # Read the real target from this destination's FFmpeg command. This is important
+        # now that several outputs from the same channel can have different bitrates.
+        expected=float(_cmd_value(getattr(ps,'cmd',[]),'-r',session.work_channel.get('fps') or 30) or 30)
+        target=parse_bitrate_k(_cmd_value(getattr(ps,'cmd',[]),'-b:v',session.work_channel.get('video_bitrate') or '4500k'),4500)
         try:
             if proc.stdout is None:return
             for raw in proc.stdout:
@@ -93,7 +104,7 @@ def install_professional_streaming(manager,streaming_module):
                         try:save_metric(session.channel_id,ps.slug,**metrics)
                         except Exception:pass
                     if metrics['quality'] in {'warning','critical'} and now-last_alert>300:
-                        last_alert=now;add_alert('critical' if metrics['quality']=='critical' else 'warning','encoder-quality',f'Qualidade {metrics["quality"]}: {ps.label}',f"FPS {metrics['fps']:.1f} · bitrate {metrics['bitrate_k']:.0f}k · speed {metrics['speed']:.2f}x",session.channel_id)
+                        last_alert=now;add_alert('critical' if metrics['quality']=='critical' else 'warning','encoder-quality',f'Qualidade {metrics["quality"]}: {ps.label}',f"FPS {metrics['fps']:.1f} · bitrate {metrics['bitrate_k']:.0f}k/{target:.0f}k · speed {metrics['speed']:.2f}x",session.channel_id)
         finally:
             try:log_handle.close()
             except Exception:pass
