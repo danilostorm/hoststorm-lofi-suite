@@ -27,6 +27,7 @@ def create_app():
     from .seamless_playlist import install_seamless_youtube_playlist
     from .tenant_channels import install_creator_tenancy
     from .multi_output import install_multi_output
+    from .multi_output_api import multi_output_api_bp
 
     app = Flask(__name__, template_folder='../templates', static_folder='../static')
     app.secret_key = os.environ.get('HOSTSTORM_SECRET_KEY') or os.environ.get('LV2_ADMIN_PASSWORD') or os.urandom(32)
@@ -120,6 +121,7 @@ def create_app():
     app.register_blueprint(automation_bp)
     app.register_blueprint(ai_bp)
     app.register_blueprint(compat_bp)
+    app.register_blueprint(multi_output_api_bp)
 
     streaming_module.MANAGER.start_threads()
     SCHEDULER = scheduler_module.SCHEDULER
