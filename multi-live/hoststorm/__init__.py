@@ -26,6 +26,7 @@ def create_app():
     from .parallel_schedules import install_parallel_schedules
     from .seamless_playlist import install_seamless_youtube_playlist
     from .tenant_channels import install_creator_tenancy
+    from .multi_output import install_multi_output
 
     app = Flask(__name__, template_folder='../templates', static_folder='../static')
     app.secret_key = os.environ.get('HOSTSTORM_SECRET_KEY') or os.environ.get('LV2_ADMIN_PASSWORD') or os.urandom(32)
@@ -78,6 +79,9 @@ def create_app():
     # v4.3: creator accounts own their channels and schedules. Request-scoped filters are
     # installed after all DB/streaming wrappers so background schedulers still see everything.
     install_creator_tenancy(db_module, legacy_web, streaming_module, scheduler_module)
+    # v4.4: one channel may expose multiple instances of the same destination (for example
+    # four YouTube Shorts keys), each with independent start/stop plus manual rerun offsets.
+    install_multi_output(app, db_module, legacy_web, streaming_module)
 
     # Compatibilidade do módulo web profissional: list_backups pertence a professional.py.
     from . import pro_db as pro_db_module
