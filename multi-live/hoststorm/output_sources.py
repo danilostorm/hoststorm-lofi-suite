@@ -10,6 +10,7 @@ from .config import VIDEOS_DIR
 from .utils import build_target, now_iso, safe_filename
 from .url_sources import validate_remote_url
 from . import multi_output
+from .output_bitrate import BITRATE_MODES, bitrate_mode, inherited_k, target_bitrate_k, youtube_recommended_k
 
 
 output_sources_bp = Blueprint('output_sources', __name__)
@@ -27,22 +28,18 @@ def source_mode(destination: dict | None) -> str:
 
 
 def apply_source_override(channel: dict, destination: dict | None) -> dict:
-    """Return a channel snapshot with a destination-specific manual source applied."""
     work = copy.deepcopy(channel or {})
     destination = destination or {}
     mode = source_mode(destination)
     if mode == 'channel':
         return work
-
     if mode == 'local':
         video = safe_filename(destination.get('output_source_video'))
         work['source_mode'] = 'local'
         work['video'] = video
-        # A per-output source must win for vertical destinations as well.
         work['shorts_source_mode'] = 'local'
         work['shorts_video'] = video
         return work
-
     url = str(destination.get('output_source_url') or '').strip()
     work['source_mode'] = 'url'
     work['source_url'] = url
@@ -64,7 +61,6 @@ def validate_source(destination: dict | None) -> tuple[bool, str]:
         if not (VIDEOS_DIR / video).is_file():
             return False, f'O vídeo "{video}" não existe mais na Biblioteca.'
         return True, ''
-
     url = str(destination.get('output_source_url') or '').strip()
     if not url:
         return False, 'Informe a URL externa desta saída.'
@@ -105,12 +101,26 @@ def _update_destination_from_form(channel: dict, slug: str, include_transport=Fa
         updated['output_source_video'] = ''
         updated['output_source_url'] = ''
 
+    rate_mode = str(request.form.get('bitrate_mode') or bitrate_mode(destination)).strip().lower()
+    if rate_mode not in BITRATE_MODES:
+        return None, 'Modo de bitrate inválido.'
+    updated['output_bitrate_mode'] = rate_mode
+    if rate_mode == 'custom':
+        try:
+            custom_k = int(float(request.form.get('bitrate_k') or destination.get('output_video_bitrate_k') or 0))
+        except Exception:
+            custom_k = 0
+        if not 500 <= custom_k <= 50000:
+            return None, 'Bitrate personalizado deve ficar entre 500 e 50000 kbps.'
+        updated['output_video_bitrate_k'] = custom_k
+    else:
+        updated['output_video_bitrate_k'] = 0
+
     if include_transport:
         rtmp_url = str(request.form.get('rtmp_url') or '').strip()
         if rtmp_url:
             updated['rtmp_url'] = rtmp_url
         stream_key = str(request.form.get('stream_key') or '').strip()
-        # Empty means "keep the encrypted/current key", matching the main channel form.
         if stream_key:
             updated['stream_key'] = stream_key
 
@@ -138,10 +148,7 @@ def output_sources(cid):
     channel = WEB.get_channel(cid, False)
     if not channel:
         abort(404)
-    videos = sorted(
-        [p.name for p in VIDEOS_DIR.iterdir() if p.is_file()],
-        key=lambda value: value.casefold(),
-    )
+    videos = sorted([p.name for p in VIDEOS_DIR.iterdir() if p.is_file()], key=lambda value: value.casefold())
     outputs = {}
     for slug, destination in (channel.get('destinations') or {}).items():
         outputs[slug] = {
@@ -149,6 +156,12 @@ def output_sources(cid):
             'video': str(destination.get('output_source_video') or ''),
             'url': str(destination.get('output_source_url') or ''),
             'label': str(destination.get('label') or slug),
+            'platform': multi_output.platform_kind(slug, destination),
+            'bitrate_mode': bitrate_mode(destination),
+            'bitrate_k': int(destination.get('output_video_bitrate_k') or 0),
+            'inherited_bitrate_k': inherited_k(channel, slug, destination),
+            'recommended_bitrate_k': youtube_recommended_k(channel, slug, destination),
+            'effective_bitrate_k': target_bitrate_k(channel, slug, destination),
         }
     return jsonify({'ok': True, 'channel_id': cid, 'videos': videos, 'outputs': outputs})
 
@@ -163,22 +176,19 @@ def save_output_source(cid, slug):
     updated, error = _update_destination_from_form(channel, slug)
     if not updated:
         return _json_or_error(False, error, 400)
-
     _persist_destination(channel, slug, updated)
-
     running = False
     try:
         running = bool(((MANAGER.channel_status(cid).get('platforms') or {}).get(slug) or {}).get('running'))
     except Exception:
         pass
     if running:
-        return _json_or_error(True, 'Fonte salva. Pare e inicie somente esta saída para aplicar a nova fonte.')
-    return _json_or_error(True, 'Fonte desta saída salva.')
+        return _json_or_error(True, 'Fonte e bitrate salvos. Reinicie somente esta saída para aplicar.')
+    return _json_or_error(True, 'Fonte e bitrate desta saída salvos.')
 
 
 @output_sources_bp.route('/lives/<cid>/outputs/<slug>/source/start', methods=['POST'])
 def save_and_start_output(cid, slug):
-    """Save the card as shown in the browser and start exactly this destination."""
     if not WEB:
         abort(503)
     channel = WEB.get_channel(cid)
@@ -189,14 +199,12 @@ def save_and_start_output(cid, slug):
         return _json_or_error(False, error, 400)
     if not build_target(updated.get('rtmp_url'), updated.get('stream_key')):
         return _json_or_error(False, 'Informe a URL RTMP e a chave desta saída antes de iniciar.', 400)
-
     _persist_destination(channel, slug, updated)
     ok, message = multi_output._start_output(MANAGER, cid, slug)
     return _json_or_error(ok, message, 200 if ok else 400)
 
 
 def install_output_sources(app, web_module, streaming_module):
-    """Install independent manual sources per RTMP destination."""
     global WEB, MANAGER, STREAMING
     WEB = web_module
     MANAGER = streaming_module.MANAGER
@@ -207,7 +215,6 @@ def install_output_sources(app, web_module, streaming_module):
     original_start_output = multi_output._start_output
 
     def build_cmd(self, session, slug):
-        # Scheduled runs deliberately keep using the media selected by the schedule.
         if session.trigger != 'manual':
             return original_build_cmd(session, slug)
         destination = ((session.work_channel or {}).get('destinations') or {}).get(slug) or {}
@@ -233,16 +240,10 @@ def install_output_sources(app, web_module, streaming_module):
         if not ok:
             return False, error
 
-        # If the channel already owns a live core session, the v4.4 path can attach this
-        # destination to it. build_cmd() above still gives this output its own source.
         with manager_obj.lock:
             session = manager_obj.sessions.get(cid)
         if session and not session.stop_requested and session.desired_running:
             return original_start_output(manager_obj, cid, slug)
-
-        # "Fonte do canal" can use the normal starter unchanged. A dedicated source needs
-        # its own work-channel snapshot *before* StreamManager.start() validates the channel
-        # source; otherwise an empty/different main source blocks the independent output.
         if source_mode(destination) == 'channel':
             return original_start_output(manager_obj, cid, slug)
 
@@ -256,19 +257,10 @@ def install_output_sources(app, web_module, streaming_module):
 
         run_id = STREAMING.create_live_run(cid, None, 'manual', media_label, [slug], '')
         live_session = STREAMING.Session(
-            channel_id=cid,
-            run_id=run_id,
-            trigger='manual',
-            schedule_id=None,
-            platforms=[slug],
-            media=media,
-            started_at=now_iso(),
-            desired_running=True,
-            work_channel=work,
-            max_duration_seconds=0,
+            channel_id=cid, run_id=run_id, trigger='manual', schedule_id=None,
+            platforms=[slug], media=media, started_at=now_iso(), desired_running=True,
+            work_channel=work, max_duration_seconds=0,
         )
-
-        # Close the race where another click/session appeared after the first check.
         with manager_obj.lock:
             current = manager_obj.sessions.get(cid)
             if current and not current.stop_requested and current.desired_running:
@@ -278,12 +270,10 @@ def install_output_sources(app, web_module, streaming_module):
                     pass
                 return original_start_output(manager_obj, cid, slug)
             manager_obj.sessions[cid] = live_session
-
         try:
             STREAMING.set_desired_running(cid, True)
         except Exception:
             pass
-
         try:
             started = bool(manager_obj._start_platform(live_session, slug, recovery=False))
         except Exception as exc:
@@ -292,7 +282,6 @@ def install_output_sources(app, web_module, streaming_module):
         else:
             state = (live_session.platform_states or {}).get(slug)
             error = str(getattr(state, 'last_error', '') or '')
-
         if not started:
             with manager_obj.lock:
                 if manager_obj.sessions.get(cid) is live_session:
@@ -303,21 +292,10 @@ def install_output_sources(app, web_module, streaming_module):
             except Exception:
                 pass
             return False, 'Não foi possível iniciar esta saída.' + (f' {error}' if error else '')
-
         try:
-            STREAMING.audit(
-                'info', 'platform_started_individually', cid,
-                f'Destino {slug} iniciado com fonte própria.',
-                {'platform': slug, 'source_mode': source_mode(destination), 'run_id': run_id},
-            )
-            STREAMING.BUS.publish(
-                'live_started',
-                {'channel_id': cid, 'run_id': run_id, 'platforms': [slug], 'trigger': 'manual', 'stop_at': ''},
-            )
-            STREAMING.BUS.publish(
-                'platform_started',
-                {'channel_id': cid, 'slug': slug, 'run_id': run_id, 'source_mode': source_mode(destination)},
-            )
+            STREAMING.audit('info', 'platform_started_individually', cid, f'Destino {slug} iniciado com fonte própria.', {'platform': slug, 'source_mode': source_mode(destination), 'run_id': run_id})
+            STREAMING.BUS.publish('live_started', {'channel_id': cid, 'run_id': run_id, 'platforms': [slug], 'trigger': 'manual', 'stop_at': ''})
+            STREAMING.BUS.publish('platform_started', {'channel_id': cid, 'slug': slug, 'run_id': run_id, 'source_mode': source_mode(destination)})
         except Exception:
             pass
         return True, 'Live desta saída iniciada.'
