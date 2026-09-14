@@ -83,6 +83,28 @@ def _json_or_error(ok: bool, message: str, status=200):
     return jsonify({'ok': bool(ok), 'message': str(message)}), status
 
 
+@output_sources_bp.route('/api/output-sources/<cid>')
+def output_sources(cid):
+    if not WEB:
+        abort(503)
+    channel = WEB.get_channel(cid, False)
+    if not channel:
+        abort(404)
+    videos = sorted(
+        [p.name for p in VIDEOS_DIR.iterdir() if p.is_file()],
+        key=lambda value: value.casefold(),
+    )
+    outputs = {}
+    for slug, destination in (channel.get('destinations') or {}).items():
+        outputs[slug] = {
+            'mode': source_mode(destination),
+            'video': str(destination.get('output_source_video') or ''),
+            'url': str(destination.get('output_source_url') or ''),
+            'label': str(destination.get('label') or slug),
+        }
+    return jsonify({'ok': True, 'channel_id': cid, 'videos': videos, 'outputs': outputs})
+
+
 @output_sources_bp.route('/lives/<cid>/outputs/<slug>/source', methods=['POST'])
 def save_output_source(cid, slug):
     if not WEB:
@@ -137,6 +159,7 @@ def install_output_sources(app, web_module, streaming_module):
     original_start_output = multi_output._start_output
 
     def build_cmd(self, session, slug):
+        # Scheduled runs deliberately keep using the media selected by the schedule.
         if session.trigger != 'manual':
             return original_build_cmd(session, slug)
         destination = ((session.work_channel or {}).get('destinations') or {}).get(slug) or {}
