@@ -79,6 +79,8 @@ DEFAULT_CHANNEL_SETTINGS = {
     'preset': 'veryfast',
     'shorts_fit': 'contain',
     'format_mode': 'horizontal',
+    'rerun_enabled': '0',
+    'rerun_start_seconds': '0',
     # Professional 3.0
     'profile_id': '',
     'encoder': 'auto',
