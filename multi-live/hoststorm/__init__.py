@@ -32,6 +32,7 @@ def create_app():
     from .output_bitrate import install_output_bitrate
     from .output_management import install_output_management
     from .per_output_rerun import install_per_output_rerun
+    from .output_start_offset import install_output_start_offset
 
     app = Flask(__name__, template_folder='../templates', static_folder='../static')
     app.secret_key = os.environ.get('HOSTSTORM_SECRET_KEY') or os.environ.get('LV2_ADMIN_PASSWORD') or os.urandom(32)
@@ -87,6 +88,9 @@ def create_app():
     # v4.8: rerun policy belongs to each destination. Legacy channel-wide values are used
     # only as a backward-compatible default until a destination is saved explicitly.
     install_per_output_rerun(app, db_module, legacy_web, streaming_module)
+    # v4.9: the first manual playback can also start at an independent timestamp. This
+    # wrapper is installed after rerun so initial-start and rerun offsets never compete.
+    install_output_start_offset(app, db_module, legacy_web, streaming_module)
 
     from . import pro_db as pro_db_module
     from .professional import list_backups as professional_list_backups
