@@ -163,5 +163,11 @@ def quality_label(fps,expected_fps,bitrate_k,target_k,speed,dropped=0):
     if speed and speed<0.85: return 'critical'
     if expected_fps and fps<expected_fps*.75: return 'critical'
     if target_k and bitrate_k and bitrate_k<target_k*.55: return 'warning'
-    if dropped>100: return 'warning'
+    # FFmpeg's drop_frames also counts intentional frame-rate conversion (for example
+    # a 60 fps source encoded at 30 fps). A high cumulative number alone is therefore
+    # not evidence of a bad RTMP connection. Only warn when it is accompanied by a
+    # measurable realtime/FPS degradation.
+    degraded_speed = bool(speed and speed < 0.97)
+    degraded_fps = bool(expected_fps and fps < expected_fps * 0.95)
+    if dropped>100 and (degraded_speed or degraded_fps): return 'warning'
     return 'excellent'
