@@ -7,17 +7,42 @@
   const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const mbps=k=>`${(Number(k||0)/1000).toFixed(Number(k||0)%1000?1:0)} Mbps`;
 
+  function formatTime(seconds){
+    seconds=Math.max(0,Math.floor(Number(seconds)||0));
+    const h=Math.floor(seconds/3600),m=Math.floor((seconds%3600)/60),s=seconds%60;
+    return h?`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`:`${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  }
+
+  function parseTime(value){
+    const raw=String(value||'').trim();
+    if(!raw)return 0;
+    const parts=raw.split(':').map(Number);
+    if(parts.some(x=>!Number.isFinite(x)||x<0))return 0;
+    let seconds=0;
+    if(parts.length===3)seconds=parts[0]*3600+parts[1]*60+parts[2];
+    else if(parts.length===2)seconds=parts[0]*60+parts[1];
+    else if(parts.length===1)seconds=parts[0];
+    return Math.max(0,Math.min(86400,Math.floor(seconds||0)));
+  }
+
   function installStyles(){
     if($('#hsOutputSourceStyles'))return;
     const style=document.createElement('style');
     style.id='hsOutputSourceStyles';
     style.textContent=`
-      .hs-output-source-box{margin-top:14px;padding:12px;border:1px solid rgba(125,145,185,.22);border-radius:11px;background:rgba(255,255,255,.018)}
-      .hs-output-source-box h4{margin:0 0 4px;font-size:.82rem}.hs-output-source-help{margin:0 0 10px;font-size:.72rem;opacity:.62;line-height:1.35}
-      .hs-output-source-grid{display:grid;grid-template-columns:1fr;gap:9px}.hs-output-source-row{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end;margin-top:9px}
+      .hs-output-source-box{margin-top:12px;border:1px solid rgba(125,145,185,.22);border-radius:11px;background:rgba(255,255,255,.018);overflow:hidden}
+      .hs-output-source-box>summary{list-style:none;cursor:pointer;padding:11px 12px;display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:.79rem;font-weight:700}
+      .hs-output-source-box>summary::-webkit-details-marker{display:none}.hs-output-source-box>summary:after{content:'▾';opacity:.55;transition:transform .15s ease}.hs-output-source-box[open]>summary:after{transform:rotate(180deg)}
+      .hs-output-summary-text{display:flex;gap:6px;flex-wrap:wrap;align-items:center}.hs-output-summary-chip{font-size:.68rem;font-weight:600;padding:3px 7px;border:1px solid rgba(125,145,185,.24);border-radius:999px;opacity:.78}
+      .hs-output-source-inner{padding:0 12px 12px;border-top:1px solid rgba(125,145,185,.14)}
+      .hs-output-source-help{margin:10px 0;font-size:.72rem;opacity:.62;line-height:1.4}
+      .hs-output-source-grid{display:grid;grid-template-columns:1fr;gap:9px}.hs-output-source-row{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end;margin-top:10px}
       .hs-output-source-status{font-size:.72rem;min-height:1em;opacity:.72}.hs-output-source-status.ok{color:#67e39c;opacity:1}.hs-output-source-status.error{color:#ff8585;opacity:1}.hs-output-source-status.busy{color:#f5c76f;opacity:1}
-      .hs-output-bitrate-note{font-size:.72rem;opacity:.7;margin-top:-2px}.hs-output-bitrate-note strong{color:#7ee8ae}.hs-output-source-box [hidden]{display:none!important}
-      @media(max-width:650px){.hs-output-source-row{grid-template-columns:1fr}}
+      .hs-output-bitrate-note,.hs-output-rerun-note{font-size:.72rem;opacity:.7;margin-top:-2px}.hs-output-bitrate-note strong,.hs-output-rerun-note strong{color:#7ee8ae}
+      .hs-output-rerun{padding:10px;border:1px solid rgba(125,145,185,.16);border-radius:9px;background:rgba(82,127,255,.035)}
+      .hs-output-rerun-head{display:flex;align-items:center;justify-content:space-between;gap:10px}.hs-output-rerun-head label{margin:0;display:flex;align-items:center;gap:8px;font-weight:700}.hs-output-rerun-fields{margin-top:9px}
+      .hs-output-source-box [hidden]{display:none!important}
+      @media(max-width:650px){.hs-output-source-row{grid-template-columns:1fr}.hs-output-source-box>summary{align-items:flex-start;flex-direction:column}}
     `;
     document.head.appendChild(style);
   }
@@ -36,10 +61,38 @@
     return fd;
   }
 
+  function rerunDataFor(box){
+    const fd=new FormData();
+    const enabled=!!$('[data-output-rerun-enabled]',box)?.checked;
+    const human=$('[data-output-rerun-human]',box)?.value||'00:00';
+    fd.set('enabled',enabled?'1':'0');
+    fd.set('start_seconds',String(parseTime(human)));
+    return fd;
+  }
+
+  async function sendRerun(slug,box){
+    try{
+      const response=await fetch(`/lives/${encodeURIComponent(cid)}/outputs/${encodeURIComponent(slug)}/rerun`,{
+        method:'POST',body:rerunDataFor(box),headers:{'X-Requested-With':'HostStorm'},cache:'no-store'
+      });
+      const payload=await response.json().catch(()=>({ok:false,message:`HTTP ${response.status}`}));
+      return {ok:response.ok&&payload.ok,payload,status:response.status};
+    }catch(error){
+      return {ok:false,payload:{message:error?.message||String(error)},status:0};
+    }
+  }
+
   async function sendSource(slug,box,card,{start=false}={}){
     const status=$('[data-output-source-status]',box);
     status.className='hs-output-source-status busy';
     status.textContent=start?'Salvando e iniciando esta saída...':'Salvando...';
+    const rerun=await sendRerun(slug,box);
+    if(!rerun.ok){
+      status.className='hs-output-source-status error';
+      status.textContent='Falha salvando rerun: '+(rerun.payload?.message||'erro desconhecido');
+      box.open=true;
+      return rerun;
+    }
     const path=start?'source/start':'source';
     try{
       const response=await fetch(`/lives/${encodeURIComponent(cid)}/outputs/${encodeURIComponent(slug)}/${path}`,{
@@ -49,15 +102,17 @@
       const ok=response.ok&&payload.ok;
       status.className='hs-output-source-status '+(ok?'ok':'error');
       status.textContent=payload.message||(ok?(start?'Live iniciada.':'Configuração salva.'):'Falha na operação.');
+      if(!ok)box.open=true;
       return {ok,payload,status:response.status};
     }catch(error){
       status.className='hs-output-source-status error';
       status.textContent='Falha: '+(error?.message||error);
+      box.open=true;
       return {ok:false,payload:{message:status.textContent},status:0};
     }
   }
 
-  function sourceBox(slug,settings,videos){
+  function sourceBox(slug,settings,rerunSettings,videos){
     const mode=settings?.mode||'channel';
     const currentVideo=settings?.video||'';
     const rateMode=settings?.bitrate_mode||'inherit';
@@ -66,60 +121,112 @@
     const recommended=Number(settings?.recommended_bitrate_k||0);
     const platform=String(settings?.platform||'');
     const youtube=platform==='youtube'||platform==='youtube_shorts';
+    const rerunEnabled=!!rerunSettings?.enabled;
+    const rerunStart=Number(rerunSettings?.start_seconds||0);
     const options=['<option value="">Escolha um vídeo...</option>'].concat(videos.map(v=>`<option value="${esc(v)}" ${v===currentVideo?'selected':''}>${esc(v)}</option>`)).join('');
-    const box=document.createElement('div');
+    const box=document.createElement('details');
     box.className='hs-output-source-box';
     box.dataset.outputSource=slug;
     box.innerHTML=`
-      <h4>Fonte e qualidade desta saída</h4>
-      <p class="hs-output-source-help">Cada live pode usar conteúdo e bitrate próprios. Ao clicar em “Iniciar só esta”, tudo neste card é salvo automaticamente.</p>
-      <div class="hs-output-source-grid">
-        <label>Origem
-          <select data-output-source-mode>
-            <option value="channel" ${mode==='channel'?'selected':''}>Usar fonte do canal</option>
-            <option value="local" ${mode==='local'?'selected':''}>Arquivo local da Biblioteca</option>
-            <option value="url" ${mode==='url'?'selected':''}>URL externa</option>
-          </select>
-        </label>
-        <label data-output-local>Vídeo da Biblioteca<select data-output-source-video>${options}</select></label>
-        <label data-output-url>URL externa<input data-output-source-url value="${esc(settings?.url||'')}" placeholder="YouTube, HLS, MP4, RTMP..."></label>
-        <label>Bitrate desta saída
-          <select data-output-bitrate-mode>
-            ${youtube?`<option value="auto" ${rateMode==='auto'?'selected':''}>Automático YouTube recomendado (${mbps(recommended)})</option>`:`<option value="auto" ${rateMode==='auto'?'selected':''}>Automático</option>`}
-            <option value="inherit" ${rateMode==='inherit'?'selected':''}>Herdar do canal (${mbps(inherited)})</option>
-            <option value="custom" ${rateMode==='custom'?'selected':''}>Personalizado</option>
-          </select>
-        </label>
-        <label data-output-bitrate-custom>Bitrate personalizado (kbps)<input type="number" min="500" max="50000" step="100" data-output-bitrate-k value="${Math.round(customK)}"></label>
-        <div class="hs-output-bitrate-note" data-output-bitrate-note></div>
-      </div>
-      <div class="hs-output-source-row">
-        <span class="hs-output-source-status" data-output-source-status></span>
-        <button type="button" class="btn ghost" data-output-source-save>Salvar fonte/bitrate</button>
+      <summary><span>Conteúdo, qualidade e rerun</span><span class="hs-output-summary-text" data-output-summary></span></summary>
+      <div class="hs-output-source-inner">
+        <p class="hs-output-source-help">Configuração exclusiva desta live. “Usar fonte do canal” herda os padrões do topo; qualquer opção abaixo sobrescreve somente este destino.</p>
+        <div class="hs-output-source-grid">
+          <label>Origem
+            <select data-output-source-mode>
+              <option value="channel" ${mode==='channel'?'selected':''}>Usar fonte padrão do canal</option>
+              <option value="local" ${mode==='local'?'selected':''}>Arquivo local da Biblioteca</option>
+              <option value="url" ${mode==='url'?'selected':''}>URL externa</option>
+            </select>
+          </label>
+          <label data-output-local>Vídeo da Biblioteca<select data-output-source-video>${options}</select></label>
+          <label data-output-url>URL externa<input data-output-source-url value="${esc(settings?.url||'')}" placeholder="YouTube, HLS, MP4, RTMP..."></label>
+          <label>Bitrate desta saída
+            <select data-output-bitrate-mode>
+              ${youtube?`<option value="auto" ${rateMode==='auto'?'selected':''}>Automático YouTube recomendado (${mbps(recommended)})</option>`:`<option value="auto" ${rateMode==='auto'?'selected':''}>Automático</option>`}
+              <option value="inherit" ${rateMode==='inherit'?'selected':''}>Herdar do canal (${mbps(inherited)})</option>
+              <option value="custom" ${rateMode==='custom'?'selected':''}>Personalizado</option>
+            </select>
+          </label>
+          <label data-output-bitrate-custom>Bitrate personalizado (kbps)<input type="number" min="500" max="50000" step="100" data-output-bitrate-k value="${Math.round(customK)}"></label>
+          <div class="hs-output-bitrate-note" data-output-bitrate-note></div>
+          <div class="hs-output-rerun">
+            <div class="hs-output-rerun-head"><label><input type="checkbox" data-output-rerun-enabled ${rerunEnabled?'checked':''}> Rerun personalizado desta saída</label></div>
+            <div class="hs-output-rerun-fields" data-output-rerun-fields>
+              <label>Nas repetições, começar em<input type="text" data-output-rerun-human value="${esc(formatTime(rerunStart))}" placeholder="MM:SS ou HH:MM:SS"></label>
+              <div class="hs-output-rerun-note">A primeira reprodução começa em <strong>00:00</strong>. A partir da segunda, somente esta saída volta do ponto escolhido.</div>
+            </div>
+          </div>
+        </div>
+        <div class="hs-output-source-row">
+          <span class="hs-output-source-status" data-output-source-status></span>
+          <button type="button" class="btn ghost" data-output-source-save>Salvar esta saída</button>
+        </div>
       </div>`;
 
     const modeSelect=$('[data-output-source-mode]',box), localField=$('[data-output-local]',box), urlField=$('[data-output-url]',box);
+    const videoSelect=$('[data-output-source-video]',box),urlInput=$('[data-output-source-url]',box);
     const rateSelect=$('[data-output-bitrate-mode]',box), customField=$('[data-output-bitrate-custom]',box), customInput=$('[data-output-bitrate-k]',box), note=$('[data-output-bitrate-note]',box);
-    const button=$('[data-output-source-save]',box);
+    const rerunCheck=$('[data-output-rerun-enabled]',box),rerunFields=$('[data-output-rerun-fields]',box),rerunHuman=$('[data-output-rerun-human]',box);
+    const summary=$('[data-output-summary]',box),button=$('[data-output-source-save]',box);
+
     const paintSource=()=>{const value=modeSelect.value;localField.hidden=value!=='local';urlField.hidden=value!=='url';};
     const paintRate=()=>{
       const value=rateSelect.value;customField.hidden=value!=='custom';
       const effective=value==='custom'?Number(customInput.value||0):(value==='auto'?(youtube?recommended:inherited):inherited);
-      note.innerHTML=`Efetivo ao reiniciar: <strong>${mbps(effective)}</strong> · CBR estável${youtube?' · ajuste recomendado para ingestão H.264 do YouTube':''}.`;
+      note.innerHTML=`Efetivo ao reiniciar: <strong>${mbps(effective)}</strong> · CBR estável${youtube?' · recomendado para ingestão H.264 do YouTube':''}.`;
     };
-    modeSelect.addEventListener('change',paintSource);rateSelect.addEventListener('change',paintRate);customInput.addEventListener('input',paintRate);paintSource();paintRate();
-    button.addEventListener('click',async()=>{button.disabled=true;try{await sendSource(slug,box,box.closest('.destination-card'));}finally{button.disabled=false;}});
+    const paintRerun=()=>{rerunFields.hidden=!rerunCheck.checked;};
+    const paintSummary=()=>{
+      const source=modeSelect.value==='local'?(videoSelect.value?`Biblioteca: ${videoSelect.value}`:'Biblioteca'):modeSelect.value==='url'?'URL externa':'Fonte do canal';
+      const rate=rateSelect.value==='custom'?mbps(Number(customInput.value||0)):rateSelect.value==='auto'?(youtube?`Auto ${mbps(recommended)}`:'Auto'):`Canal ${mbps(inherited)}`;
+      const rerun=rerunCheck.checked?`Rerun ${formatTime(parseTime(rerunHuman.value))}`:'Rerun off';
+      summary.innerHTML=`<span class="hs-output-summary-chip">${esc(source)}</span><span class="hs-output-summary-chip">${esc(rate)}</span><span class="hs-output-summary-chip">${esc(rerun)}</span>`;
+    };
+    const repaint=()=>{paintSource();paintRate();paintRerun();paintSummary();};
+    [modeSelect,videoSelect,rateSelect,customInput,rerunCheck,rerunHuman,urlInput].forEach(el=>{
+      if(!el)return;el.addEventListener(el.tagName==='SELECT'||el.type==='checkbox'?'change':'input',repaint);
+    });
+    repaint();
+    button.addEventListener('click',async()=>{button.disabled=true;try{await sendSource(slug,box,box.closest('.destination-card'));paintSummary();}finally{button.disabled=false;}});
     return box;
   }
 
+  function clarifyChannelDefaults(){
+    const form=$('form.form-layout');if(!form)return;
+    const panels=$$('section.panel',form);
+    const source=panels.find(p=>p.querySelector('h2')?.textContent.trim()==='Fonte principal');
+    const encoder=panels.find(p=>p.querySelector('h2')?.textContent.trim()==='Encoder & Perfil');
+    if(source){
+      const h=source.querySelector('h2'),p=source.querySelector('.panel-head p');
+      if(h)h.textContent='Fonte padrão do canal';
+      if(p)p.textContent='Fallback para saídas configuradas como “Usar fonte padrão do canal”. Fontes individuais ficam nos Destinos RTMP.';
+      source.querySelector('.hs-rerun-box')?.remove();
+    }
+    if(encoder){
+      const h=encoder.querySelector('h2'),p=encoder.querySelector('.panel-head p');
+      if(h)h.textContent='Encoder padrão do canal';
+      if(p)p.textContent='Resolução, FPS, áudio e preset usados como base. O bitrate pode ser definido individualmente em cada destino.';
+    }
+  }
+
   async function mount(){
-    const grid=$('.destination-grid');if(!grid)return;installStyles();let payload;
-    try{const response=await fetch(`/api/output-sources/${encodeURIComponent(cid)}`,{cache:'no-store'});if(!response.ok)return;payload=await response.json();}catch(_){return;}
-    const videos=Array.isArray(payload.videos)?payload.videos:[];const outputs=payload.outputs||{};
+    const grid=$('.destination-grid');if(!grid)return;installStyles();clarifyChannelDefaults();
+    let sourcePayload={},rerunPayload={};
+    try{
+      const [sourceResponse,rerunResponse]=await Promise.all([
+        fetch(`/api/output-sources/${encodeURIComponent(cid)}`,{cache:'no-store'}),
+        fetch(`/api/output-rerun/${encodeURIComponent(cid)}`,{cache:'no-store'})
+      ]);
+      if(sourceResponse.ok)sourcePayload=await sourceResponse.json();
+      if(rerunResponse.ok)rerunPayload=await rerunResponse.json();
+    }catch(_){return;}
+    const videos=Array.isArray(sourcePayload.videos)?sourcePayload.videos:[];
+    const outputs=sourcePayload.outputs||{},reruns=rerunPayload.outputs||{};
     $$('.destination-card',grid).forEach(card=>{
       if($('.hs-output-source-box',card))return;
       const toggle=card.querySelector('input[type="checkbox"][name$="_enabled"]');if(!toggle)return;
-      const slug=toggle.name.slice(0,-8);const box=sourceBox(slug,outputs[slug]||{},videos);const actions=$('.hs-output-actions',card);
+      const slug=toggle.name.slice(0,-8);const box=sourceBox(slug,outputs[slug]||{},reruns[slug]||{},videos);const actions=$('.hs-output-actions',card);
       if(actions)card.insertBefore(box,actions);else card.appendChild(box);
     });
     if(!grid.dataset.outputSourceStartBound){
@@ -129,8 +236,11 @@
         const card=button.closest('.destination-card'),box=card?.querySelector('.hs-output-source-box');if(!card||!box)return;
         event.preventDefault();event.stopImmediatePropagation();const slug=button.dataset.outputStart||box.dataset.outputSource||'';if(!slug)return;
         const old=button.textContent;button.disabled=true;button.textContent='Iniciando...';
-        try{const result=await sendSource(slug,box,card,{start:true});if(!result.ok){alert(result.payload?.message||'Não foi possível iniciar esta saída.');return;}button.textContent='✓ Iniciada';setTimeout(()=>{button.textContent=old;button.disabled=false;},1800);}
-        finally{if(button.textContent==='Iniciando...'){button.textContent=old;button.disabled=false;}}
+        try{
+          const result=await sendSource(slug,box,card,{start:true});
+          if(!result.ok){alert(result.payload?.message||'Não foi possível iniciar esta saída.');return;}
+          button.textContent='✓ Iniciada';setTimeout(()=>{button.textContent=old;button.disabled=false;},1800);
+        }finally{if(button.textContent==='Iniciando...'){button.textContent=old;button.disabled=false;}}
       },true);
     }
   }
