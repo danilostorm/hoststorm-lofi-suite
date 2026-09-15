@@ -30,6 +30,7 @@ def create_app():
     from .multi_output_api import multi_output_api_bp
     from .output_sources import install_output_sources
     from .output_bitrate import install_output_bitrate
+    from .output_management import install_output_management
 
     app = Flask(__name__, template_folder='../templates', static_folder='../static')
     app.secret_key = os.environ.get('HOSTSTORM_SECRET_KEY') or os.environ.get('LV2_ADMIN_PASSWORD') or os.urandom(32)
@@ -78,6 +79,10 @@ def create_app():
     # v4.6: final command wrapper applies an independent bitrate policy to every RTMP
     # destination and enforces stable CBR after source/multi-output wrappers are resolved.
     install_output_bitrate(streaming_module.MANAGER)
+    # v4.7: every manual output owns a persistent desired-running flag. This final wrapper
+    # restores MK/DK/etc. outputs after a container/server restart even when the channel's
+    # main source is intentionally empty, and exposes removal of any RTMP destination.
+    install_output_management(app, db_module, legacy_web, streaming_module)
 
     from . import pro_db as pro_db_module
     from .professional import list_backups as professional_list_backups
