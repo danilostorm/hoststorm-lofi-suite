@@ -33,10 +33,10 @@
       <a href="{{url_for('pro.profiles')}}" class="{% if request.endpoint=='pro.profiles' %}active{% endif %}">◈ <span>Perfis & GPU</span></a>
       <a href="{{url_for('pro.nodes')}}" class="{% if request.endpoint=='pro.nodes' %}active{% endif %}">◇ <span>Multi-servidor</span></a>
       <a href="{{url_for('pro.recordings')}}" class="{% if request.endpoint=='pro.recordings' %}active{% endif %}">◉ <span>Gravações</span></a>
-      <a href="{{url_for('pro.markers')}}" class="{% if request.endpoint=='pro.markers' %}active{% endif %}">◆ <span>Marcadores & Clipes</span></a>
+      <a href="{{url_for('pro.markers')}}" class="{% if request.endpoint and request.endpoint.startswith('pro.markers') %}active{% endif %}">◆ <span>Marcadores & Clipes</span></a>
       <a href="{{url_for('pro.analytics')}}" class="{% if request.endpoint=='pro.analytics' %}active{% endif %}">⌁ <span>Analytics</span></a>
-      <a href="{{url_for('pro.diagnostics')}}" class="{% if request.endpoint=='pro.diagnostics' %}active{% endif %}">✓ <span>Diagnóstico</span></a>
-      <a href="{{url_for('pro.alerts')}}" class="{% if request.endpoint=='pro.alerts' %}active{% endif %}">! <span>Alertas</span></a>
+      <a href="{{url_for('pro.diagnostics')}}" class="{% if request.endpoint and request.endpoint.startswith('pro.diagnostics') %}active{% endif %}">✓ <span>Diagnóstico</span></a>
+      <a href="{{url_for('pro.alerts')}}" class="{% if request.endpoint and request.endpoint.startswith('pro.alerts') %}active{% endif %}">! <span>Alertas</span></a>
       <a href="{{url_for('pro.noc')}}" class="{% if request.endpoint=='pro.noc' %}active{% endif %}">▰ <span>NOC Wall</span></a>
 
       <div class="nav-label">AI HOST</div>
@@ -71,6 +71,7 @@
 <script src="{{url_for('static',filename='app.js')}}"></script>
 <script src="{{url_for('static',filename='output_start_offset.js')}}"></script>
 <script src="{{url_for('static',filename='output_sources.js')}}"></script>
+<script src="{{url_for('static',filename='cluster_output_ui.js')}}"></script>
 <script src="{{url_for('static',filename='output_manager.js')}}"></script>
 <script src="{{url_for('static',filename='v31.js')}}"></script>
 <script src="{{url_for('static',filename='youtube_playlist.js')}}"></script>

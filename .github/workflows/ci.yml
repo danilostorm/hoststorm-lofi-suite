@@ -56,7 +56,10 @@ jobs:
         env:
           LV2_ADMIN_PASSWORD: test
           HOSTSTORM_SECRET_KEY: ci-secret-key
-        run: docker compose config >/dev/null
+          HOSTSTORM_AGENT_TOKEN: hst_agent_ci
+        run: |
+          docker compose config >/dev/null
+          docker compose -f docker-compose.agent.yml config >/dev/null
       - name: Build Multi Live image
         run: docker build -t hoststorm-multi-live-ci ./multi-live
       - name: Smoke test health endpoint

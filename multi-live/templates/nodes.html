@@ -1,1 +1,87 @@
-{% extends 'base.html' %}{% block title %}Multi-servidor • HostStorm{% endblock %}{% block heading %}Multi-servidor & Failover{% endblock %}{% block subheading %}Control plane central, agentes, prioridade e distribuição por carga.{% endblock %}{% block content %}<div class="dashboard-grid"><section class="panel span-2"><div class="panel-head"><div><h2>Servidores registrados</h2><p>O balanceador considera prioridade, CPU, RAM, GPU e streams ativos.</p></div></div>{% if best %}<div class="recommend-card"><span>Melhor nó agora</span><strong>{{best.name}}</strong><small>CPU {{best.cpu|round(1)}}% · RAM {{best.ram|round(1)}}% · prioridade {{best.priority}}</small></div>{% endif %}<div class="node-grid">{% for n in nodes %}<div class="node-card big"><div class="node-head"><div><span class="dot {{'online' if n.status in ['online','local'] else ''}}"></span><strong>{{n.name}}</strong></div><span class="status-pill {{'running' if n.status in ['online','local'] else 'offline'}}">{{n.status}}</span></div><div class="profile-specs"><span>CPU {{n.cpu|round(1)}}%</span><span>RAM {{n.ram|round(1)}}%</span><span>GPU {{n.gpu|round(1)}}%</span><span>{{n.active_streams}} streams</span><span>P{{n.priority}}</span></div><small>{{n.base_url}}</small><div class="platform-line">{% for t in n.tags %}<span class="platform-chip">{{t}}</span>{% endfor %}</div></div>{% else %}<div class="empty-state">Nenhum agente remoto registrado ainda.</div>{% endfor %}</div></section><section class="panel"><div class="panel-head"><div><h2>Registrar nó</h2><p>Use HTTPS para agentes remotos.</p></div></div><form method="post"><label>Nome<input name="name" required placeholder="Unraid GPU"></label><label>URL base<input name="base_url" placeholder="https://node.exemplo.com"></label><label>API token<input type="password" name="token" placeholder="hst_..."></label><label>Prioridade<input type="number" name="priority" value="100"></label><label>Tags<input name="tags" placeholder="gpu,nvenc,principal"></label><label class="check-row"><input type="checkbox" name="enabled" checked> Habilitado</label><button class="btn primary full">Registrar servidor</button></form></section><section class="panel span-all"><div class="panel-head"><div><h2>Como funciona o failover</h2><p>Agentes publicam telemetria via API. Canais em modo Auto podem ser enviados para o melhor nó compatível; se ele ficar indisponível, o controlador seleciona o próximo candidato.</p></div></div><div class="step-grid"><div><b>1</b><strong>Health</strong><span>CPU/RAM/GPU + streams</span></div><div><b>2</b><strong>Placement</strong><span>prioridade + tags + carga</span></div><div><b>3</b><strong>Dispatch</strong><span>API autenticada</span></div><div><b>4</b><strong>Failover</strong><span>próximo nó elegível</span></div></div></section></div>{% endblock %}
+{% extends 'base.html' %}
+{% block title %}Multi-servidor • HostStorm{% endblock %}
+{% block heading %}HostStorm Cluster{% endblock %}
+{% block subheading %}Instalação automática por SSH, Agents, seleção por saída e failover persistente.{% endblock %}
+{% block content %}
+<style>
+.cluster-install-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.cluster-install-grid .full{grid-column:1/-1}.cluster-install-log{margin-top:12px;min-height:120px;max-height:260px;overflow:auto;background:#050b13;border:1px solid rgba(125,145,185,.2);border-radius:10px;padding:10px;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap}.cluster-note{font-size:.76rem;opacity:.72;line-height:1.45;margin-top:10px}.cluster-state{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:.8rem}.cluster-state strong{color:#79e7aa}.cluster-secret-note{padding:9px 10px;border:1px solid rgba(93,214,255,.17);border-radius:9px;background:rgba(93,214,255,.04);font-size:.76rem;line-height:1.4}.cluster-actions{display:flex;gap:8px;flex-wrap:wrap}@media(max-width:760px){.cluster-install-grid{grid-template-columns:1fr}}
+</style>
+<div class="dashboard-grid">
+  <section class="panel span-2">
+    <div class="panel-head"><div><h2>Servidores registrados</h2><p>O cluster considera prioridade, CPU, RAM, GPU e quantidade de transmissões ativas.</p></div></div>
+    {% if best %}<div class="recommend-card"><span>Melhor nó agora</span><strong>{{best.name}}</strong><small>CPU {{best.cpu|round(1)}}% · RAM {{best.ram|round(1)}}% · prioridade {{best.priority}}</small></div>{% endif %}
+    <div class="node-grid">
+      {% for n in nodes %}
+      <div class="node-card big">
+        <div class="node-head"><div><span class="dot {{'online' if n.status in ['online','local'] else ''}}"></span><strong>{{n.name}}</strong></div><span class="status-pill {{'running' if n.status in ['online','local'] else 'offline'}}">{{n.status}}</span></div>
+        <div class="profile-specs"><span>CPU {{n.cpu|round(1)}}%</span><span>RAM {{n.ram|round(1)}}%</span><span>GPU {{n.gpu|round(1)}}%</span><span>{{n.active_streams}} streams</span><span>P{{n.priority}}</span></div>
+        <small>{{n.base_url}}</small>
+        <div class="platform-line">{% for t in n.tags %}<span class="platform-chip">{{t}}</span>{% endfor %}</div>
+      </div>
+      {% else %}<div class="empty-state">Nenhum Agent remoto registrado ainda. Use “Instalar novo servidor” abaixo.</div>{% endfor %}
+    </div>
+  </section>
+
+  <section class="panel span-2">
+    <div class="panel-head"><div><h2>Instalar novo servidor</h2><p>Informe o acesso SSH uma única vez. O HostStorm prepara Docker, Agent, token e registra o nó automaticamente.</p></div></div>
+    <form id="clusterInstallForm" class="cluster-install-grid">
+      <label>Nome do servidor<input name="name" required placeholder="Oracle GPU / Unraid 2"></label>
+      <label>IP ou hostname<input name="host" required placeholder="192.168.30.50 ou node.exemplo.com"></label>
+      <label>Porta SSH<input name="ssh_port" type="number" value="22" min="1" max="65535"></label>
+      <label>Usuário SSH<input name="username" value="root" required></label>
+      <label>Senha SSH<input name="password" type="password" autocomplete="new-password" required></label>
+      <label>Porta do Agent<input name="agent_port" type="number" value="3040" min="1" max="65535"></label>
+      <label>Prioridade<input name="priority" type="number" value="100"><small>Menor = preferência maior.</small></label>
+      <label>Tags opcionais<input name="tags" placeholder="principal,backup,gpu"></label>
+      <label class="full">URL externa do Agent (opcional)<input name="base_url" placeholder="https://node.exemplo.com — vazio usa http://IP:3040"></label>
+      <div class="cluster-secret-note full"><strong>Senha SSH não é salva.</strong> Ela existe somente em memória durante o provisionamento. Depois disso, Control Plane e Agent conversam por API autenticada com token próprio.</div>
+      <div class="cluster-actions full"><button class="btn primary" id="clusterInstallButton">Instalar e registrar servidor</button><span class="cluster-state" id="clusterInstallState"></span></div>
+    </form>
+    <pre class="cluster-install-log" id="clusterInstallLog">Aguardando instalação…</pre>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><div><h2>Registro manual</h2><p>Para Agent já instalado ou infraestrutura personalizada.</p></div></div>
+    <form method="post">
+      <label>Nome<input name="name" required placeholder="Servidor externo"></label>
+      <label>URL base<input name="base_url" placeholder="https://node.exemplo.com"></label>
+      <label>API token<input type="password" name="token" placeholder="hst_..."></label>
+      <label>Prioridade<input type="number" name="priority" value="100"></label>
+      <label>Tags<input name="tags" placeholder="gpu,nvenc,principal"></label>
+      <label class="check-row"><input type="checkbox" name="enabled" checked> Habilitado</label>
+      <button class="btn ghost full">Registrar manualmente</button>
+    </form>
+  </section>
+
+  <section class="panel span-all">
+    <div class="panel-head"><div><h2>Como o Cluster 5 funciona</h2><p>Cada Destino RTMP pode escolher local, automático ou um Agent específico. O estado da saída remota é persistido para sobreviver a reinício do Control Plane.</p></div></div>
+    <div class="step-grid"><div><b>1</b><strong>Bootstrap SSH</strong><span>instala Docker + Agent</span></div><div><b>2</b><strong>Health</strong><span>CPU/RAM/GPU + streams</span></div><div><b>3</b><strong>Placement</strong><span>por saída RTMP</span></div><div><b>4</b><strong>Failover</strong><span>próximo Agent ou local</span></div></div>
+    <p class="cluster-note">Arquivos locais necessários são sincronizados automaticamente antes da transmissão. Para bibliotecas muito grandes, a próxima evolução pode usar storage compartilhado/rclone para evitar cópias repetidas.</p>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(()=>{
+  const form=document.getElementById('clusterInstallForm');if(!form)return;
+  const button=document.getElementById('clusterInstallButton'),state=document.getElementById('clusterInstallState'),log=document.getElementById('clusterInstallLog');
+  let timer=null;
+  const paint=job=>{
+    log.textContent=(job.logs||[]).join('\n')||job.message||'Processando…';log.scrollTop=log.scrollHeight;
+    state.innerHTML=job.status==='success'?'<strong>✓ Servidor online</strong>':job.status==='error'?'<span style="color:#ff8585">✕ Falha</span>':'<span>● '+(job.message||'Instalando…')+'</span>';
+    if(job.status==='success'||job.status==='error'){clearInterval(timer);timer=null;button.disabled=false;if(job.status==='success')setTimeout(()=>location.reload(),1200);}
+  };
+  form.addEventListener('submit',async event=>{
+    event.preventDefault();button.disabled=true;state.textContent='Iniciando…';log.textContent='Preparando provisionamento…';
+    try{
+      const response=await fetch('/professional/nodes/install',{method:'POST',body:new FormData(form),headers:{'X-Requested-With':'HostStorm'},cache:'no-store'});
+      const data=await response.json();if(!response.ok||!data.ok)throw new Error(data.message||`HTTP ${response.status}`);
+      const id=data.job_id;
+      timer=setInterval(async()=>{
+        try{const r=await fetch('/api/cluster/install/'+encodeURIComponent(id),{cache:'no-store'});const p=await r.json();if(r.ok&&p.ok)paint(p.job);}catch(_){/* retry */}
+      },1500);
+    }catch(error){button.disabled=false;state.innerHTML='<span style="color:#ff8585">✕ '+String(error.message||error)+'</span>';log.textContent+=`\nERRO: ${error.message||error}`;}
+  });
+})();
+</script>
+{% endblock %}
