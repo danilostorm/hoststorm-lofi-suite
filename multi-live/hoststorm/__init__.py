@@ -36,6 +36,7 @@ def create_app():
     from .cluster_v5 import install_cluster_v5
     from .cluster_install_web import install_cluster_install_web
     from .cluster_output_settings import install_cluster_output_settings
+    from .cluster_runtime_guard import install_cluster_runtime_guard
 
     app = Flask(__name__, template_folder='../templates', static_folder='../static')
     app.secret_key = os.environ.get('HOSTSTORM_SECRET_KEY') or os.environ.get('LV2_ADMIN_PASSWORD') or os.urandom(32)
@@ -81,19 +82,15 @@ def create_app():
     install_creator_tenancy(db_module, legacy_web, streaming_module, scheduler_module)
     install_multi_output(app, db_module, legacy_web, streaming_module)
     install_output_sources(app, legacy_web, streaming_module)
-    # v4.6: final command wrapper applies an independent bitrate policy to every RTMP
-    # destination and enforces stable CBR after source/multi-output wrappers are resolved.
     install_output_bitrate(streaming_module.MANAGER)
-    # v4.7: every manual output owns a persistent desired-running flag.
     install_output_management(app, db_module, legacy_web, streaming_module)
-    # v4.8: rerun policy belongs to each destination.
     install_per_output_rerun(app, db_module, legacy_web, streaming_module)
-    # v4.9: first manual playback can start at an independent timestamp.
     install_output_start_offset(app, db_module, legacy_web, streaming_module)
-    # v5.0: persistent cluster placement is the outermost manual-output wrapper so each
-    # destination can run locally, automatically or on a specific remote Agent.
+    # v5.0 cluster: placement/failover is installed outside every output wrapper. The final
+    # guard also makes an explicit Local selection bypass the legacy channel dispatcher.
     install_cluster_v5(app, legacy_web, streaming_module)
     install_cluster_output_settings(app, legacy_web)
+    install_cluster_runtime_guard(legacy_web, streaming_module)
 
     from . import pro_db as pro_db_module
     from .professional import list_backups as professional_list_backups
