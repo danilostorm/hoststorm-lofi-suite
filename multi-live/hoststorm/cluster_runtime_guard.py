@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from types import MethodType
 
 from . import multi_output
@@ -8,13 +9,17 @@ from .output_sources import source_mode
 
 
 def install_cluster_runtime_guard(web_module, streaming_module):
-    """Final cluster guard.
+    """Final controller-side cluster guard.
 
     The legacy distributed wrapper predates per-output placement and works at channel level.
     This guard guarantees an output explicitly pinned to Local cannot be re-dispatched by
     that legacy channel setting, and makes the channel-level Stop button stop cluster runs too.
+    Agents skip this layer because their snapshots are always forced to local execution.
     """
     manager = streaming_module.MANAGER
+    if os.environ.get('HOSTSTORM_AGENT_MODE') == '1':
+        return manager
+
     cluster_start = multi_output._start_output
     manager_stop = manager.stop
 
@@ -33,20 +38,14 @@ def install_cluster_runtime_guard(web_module, streaming_module):
         if assignment:
             cluster_v5._stop_remote(assignment, 'saída fixada no controlador local')
 
-        # Existing local session: the pre-cluster output wrapper knows how to attach this
-        # destination without going through the old channel-level distributed dispatcher.
         with manager_obj.lock:
             session = manager_obj.sessions.get(cid)
         if session and not session.stop_requested and session.desired_running:
             return cluster_v5._ORIGINAL_START(manager_obj, cid, slug)
 
-        # Individual sources already create their own Session in output_sources.py. Only a
-        # channel-inherited source would otherwise call manager.start() and be redistributed.
         if source_mode(destination) != 'channel':
             return cluster_v5._ORIGINAL_START(manager_obj, cid, slug)
 
-        # Call the concrete StreamManager implementation to deliberately bypass the old
-        # distributed manager.start wrapper for an explicitly-local destination.
         return streaming_module.StreamManager.start(
             manager_obj, cid, platforms=[slug], media=None, trigger='manual', schedule=None,
         )
