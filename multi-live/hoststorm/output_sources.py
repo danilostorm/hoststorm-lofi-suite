@@ -11,6 +11,7 @@ from .utils import build_target, now_iso, safe_filename
 from .url_sources import validate_remote_url
 from . import multi_output
 from .output_bitrate import BITRATE_MODES, bitrate_mode, inherited_k, target_bitrate_k, youtube_recommended_k
+from .pro_db import list_nodes
 
 
 output_sources_bp = Blueprint('output_sources', __name__)
@@ -19,6 +20,7 @@ MANAGER = None
 STREAMING = None
 
 SOURCE_MODES = {'channel', 'local', 'url'}
+NODE_MODES = {'inherit', 'local', 'auto', 'specific'}
 
 
 def source_mode(destination: dict | None) -> str:
@@ -116,6 +118,19 @@ def _update_destination_from_form(channel: dict, slug: str, include_transport=Fa
     else:
         updated['output_video_bitrate_k'] = 0
 
+    node_mode = str(request.form.get('node_mode') or destination.get('output_node_mode') or 'inherit').strip().lower()
+    if node_mode not in NODE_MODES:
+        return None, 'Modo de servidor inválido.'
+    node_id = str(request.form.get('node_id') or destination.get('output_node_id') or '').strip()
+    if node_mode == 'specific':
+        node = next((n for n in list_nodes() if str(n.get('id')) == node_id and n.get('enabled')), None)
+        if not node:
+            return None, 'Servidor selecionado não existe ou está desabilitado.'
+    else:
+        node_id = ''
+    updated['output_node_mode'] = node_mode
+    updated['output_node_id'] = node_id
+
     if include_transport:
         rtmp_url = str(request.form.get('rtmp_url') or '').strip()
         if rtmp_url:
@@ -149,6 +164,19 @@ def output_sources(cid):
     if not channel:
         abort(404)
     videos = sorted([p.name for p in VIDEOS_DIR.iterdir() if p.is_file()], key=lambda value: value.casefold())
+    nodes = [
+        {
+            'id': str(node.get('id') or ''),
+            'name': str(node.get('name') or node.get('id') or ''),
+            'status': str(node.get('status') or 'unknown'),
+            'cpu': float(node.get('cpu') or 0),
+            'ram': float(node.get('ram') or 0),
+            'gpu': float(node.get('gpu') or 0),
+            'active_streams': int(node.get('active_streams') or 0),
+            'tags': list(node.get('tags') or []),
+        }
+        for node in list_nodes() if node.get('enabled')
+    ]
     outputs = {}
     for slug, destination in (channel.get('destinations') or {}).items():
         outputs[slug] = {
@@ -162,8 +190,10 @@ def output_sources(cid):
             'inherited_bitrate_k': inherited_k(channel, slug, destination),
             'recommended_bitrate_k': youtube_recommended_k(channel, slug, destination),
             'effective_bitrate_k': target_bitrate_k(channel, slug, destination),
+            'node_mode': str(destination.get('output_node_mode') or 'inherit'),
+            'node_id': str(destination.get('output_node_id') or ''),
         }
-    return jsonify({'ok': True, 'channel_id': cid, 'videos': videos, 'outputs': outputs})
+    return jsonify({'ok': True, 'channel_id': cid, 'videos': videos, 'nodes': nodes, 'outputs': outputs})
 
 
 @output_sources_bp.route('/lives/<cid>/outputs/<slug>/source', methods=['POST'])
@@ -183,8 +213,8 @@ def save_output_source(cid, slug):
     except Exception:
         pass
     if running:
-        return _json_or_error(True, 'Fonte e bitrate salvos. Reinicie somente esta saída para aplicar.')
-    return _json_or_error(True, 'Fonte e bitrate desta saída salvos.')
+        return _json_or_error(True, 'Fonte, bitrate e servidor salvos. Reinicie somente esta saída para aplicar.')
+    return _json_or_error(True, 'Configuração desta saída salva.')
 
 
 @output_sources_bp.route('/lives/<cid>/outputs/<slug>/source/start', methods=['POST'])
