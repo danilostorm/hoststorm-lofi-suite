@@ -9,8 +9,8 @@ import uuid
 from flask import Blueprint, jsonify, request
 
 from .auth import require_role
-from .cluster_bootstrap import BootstrapError, install_agent
-from .pro_db import save_node
+from .cluster_bootstrap import install_agent
+from .pro_db import save_node, update_node_health
 
 cluster_install_bp = Blueprint('cluster_install', __name__)
 _JOBS: dict[str, dict] = {}
@@ -51,6 +51,7 @@ def _install(job_id: str, payload: dict):
             'enabled': True,
             'tags': tags,
         })
+        update_node_health(node_id, 0, 0, 0, 0, 'online')
         _job_update(
             job_id,
             status='success',
