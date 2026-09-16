@@ -35,6 +35,7 @@ def create_app():
     from .output_start_offset import install_output_start_offset
     from .cluster_v5 import install_cluster_v5
     from .cluster_install_web import install_cluster_install_web
+    from .cluster_output_settings import install_cluster_output_settings
 
     app = Flask(__name__, template_folder='../templates', static_folder='../static')
     app.secret_key = os.environ.get('HOSTSTORM_SECRET_KEY') or os.environ.get('LV2_ADMIN_PASSWORD') or os.urandom(32)
@@ -92,6 +93,7 @@ def create_app():
     # v5.0: persistent cluster placement is the outermost manual-output wrapper so each
     # destination can run locally, automatically or on a specific remote Agent.
     install_cluster_v5(app, legacy_web, streaming_module)
+    install_cluster_output_settings(app, legacy_web)
 
     from . import pro_db as pro_db_module
     from .professional import list_backups as professional_list_backups
