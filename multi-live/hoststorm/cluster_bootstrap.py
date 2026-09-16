@@ -200,9 +200,20 @@ fi
 set -eu
 cd {INSTALL_ROOT}/repo
 docker compose --env-file {INSTALL_ROOT}/.env -f docker-compose.agent.yml up -d --build
+for i in $(seq 1 90); do
+  if curl -fsS http://127.0.0.1:{agent_port}/healthz >/dev/null 2>&1; then break; fi
+  sleep 2
+  if [ "$i" = 90 ]; then docker logs hoststorm-agent --tail 100; exit 31; fi
+done
 docker compose --env-file {INSTALL_ROOT}/.env -f docker-compose.agent.yml ps
 '''
         _run(client, start_cmd, username=username, password=password, timeout=1800)
+
+        _emit(progress, 'Criando token de API do Agent…')
+        token_cmd = f'''
+docker exec -e HOSTSTORM_BOOTSTRAP_TOKEN={shlex.quote(agent_token)} hoststorm-agent python -c "import os; from hoststorm.pro_db import get_user_by_username,create_token; u=get_user_by_username('agent-admin'); assert u; create_token(u['id'],'Cluster Agent',os.environ['HOSTSTORM_BOOTSTRAP_TOKEN'],['read','control','agent'])"
+'''
+        _run(client, token_cmd, username=username, password=password, timeout=60)
 
         _emit(progress, 'Detectando recursos de hardware…')
         capability_text = _run(
