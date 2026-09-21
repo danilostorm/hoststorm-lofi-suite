@@ -99,3 +99,30 @@ def test_audio_inherit_uses_vertical_override_when_present():
         },
     }
     assert _audio_for_output(channel, 'youtube_shorts__one') == ['vertical.mp3']
+
+
+
+def test_audio_for_mixed_library_source_syncs_selected_file():
+    channel = {
+        'audio': 'channel.mp3',
+        'destinations': {
+            'youtube__mix': {
+                'output_audio_mode': 'mix_library',
+                'output_audio_file': 'podcast.mp3',
+            }
+        },
+    }
+    assert _audio_for_output(channel, 'youtube__mix') == ['podcast.mp3']
+
+
+def test_audio_for_mixed_url_does_not_sync_local_audio():
+    channel = {
+        'audio': 'channel.mp3',
+        'destinations': {
+            'youtube__mix': {
+                'output_audio_mode': 'mix_url',
+                'output_audio_url': 'https://example.com/podcast.mp3',
+            }
+        },
+    }
+    assert _audio_for_output(channel, 'youtube__mix') == []

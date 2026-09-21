@@ -39,11 +39,11 @@
       .hs-output-source-grid{display:grid;grid-template-columns:1fr;gap:9px}.hs-output-source-row{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end;margin-top:10px}
       .hs-output-source-status{font-size:.72rem;min-height:1em;opacity:.72}.hs-output-source-status.ok{color:#67e39c;opacity:1}.hs-output-source-status.error{color:#ff8585;opacity:1}.hs-output-source-status.busy{color:#f5c76f;opacity:1}
       .hs-output-bitrate-note,.hs-output-rerun-note,.hs-output-audio-note{font-size:.72rem;opacity:.7;margin-top:-2px}.hs-output-bitrate-note strong,.hs-output-rerun-note strong{color:#7ee8ae}
-      .hs-output-audio{padding:10px;border:1px solid rgba(125,145,185,.16);border-radius:9px;background:rgba(54,215,140,.025);display:grid;gap:9px}.hs-output-audio label{margin:0}
+      .hs-output-audio{padding:10px;border:1px solid rgba(125,145,185,.16);border-radius:9px;background:rgba(54,215,140,.025);display:grid;gap:9px}.hs-output-audio label{margin:0}.hs-output-audio-mix{padding:9px;border:1px dashed rgba(82,127,255,.26);border-radius:8px;display:grid;gap:8px}.hs-output-audio-gains{display:grid;grid-template-columns:1fr 1fr;gap:8px}
       .hs-output-rerun{padding:10px;border:1px solid rgba(125,145,185,.16);border-radius:9px;background:rgba(82,127,255,.035)}
       .hs-output-rerun-head{display:flex;align-items:center;justify-content:space-between;gap:10px}.hs-output-rerun-head label{margin:0;display:flex;align-items:center;gap:8px;font-weight:700}.hs-output-rerun-fields{margin-top:9px}
       .hs-output-source-box [hidden]{display:none!important}
-      @media(max-width:650px){.hs-output-source-row{grid-template-columns:1fr}.hs-output-source-box>summary{align-items:flex-start;flex-direction:column}}
+      @media(max-width:650px){.hs-output-source-row{grid-template-columns:1fr}.hs-output-source-box>summary{align-items:flex-start;flex-direction:column}.hs-output-audio-gains{grid-template-columns:1fr}}
     `;
     document.head.appendChild(style);
   }
@@ -56,6 +56,9 @@
     fd.set('audio_mode',$('[data-output-audio-mode]',box)?.value||'inherit');
     fd.set('audio_file',$('[data-output-audio-file]',box)?.value||'');
     fd.set('audio_url',$('[data-output-audio-url]',box)?.value.trim()||'');
+    fd.set('audio_mix_profile',$('[data-output-audio-mix-profile]',box)?.value||'podcast');
+    fd.set('audio_original_gain_db',$('[data-output-audio-original-gain]',box)?.value||'-10');
+    fd.set('audio_external_gain_db',$('[data-output-audio-external-gain]',box)?.value||'0');
     fd.set('bitrate_mode',$('[data-output-bitrate-mode]',box)?.value||'inherit');
     fd.set('bitrate_k',$('[data-output-bitrate-k]',box)?.value||'0');
     if(includeTransport&&card){
@@ -121,6 +124,9 @@
     const currentVideo=settings?.video||'';
     const audioMode=settings?.audio_mode||'inherit';
     const currentAudio=settings?.audio_file||'';
+    const mixProfile=settings?.audio_mix_profile||'podcast';
+    const originalGain=Number(settings?.audio_original_gain_db??-10);
+    const externalGain=Number(settings?.audio_external_gain_db??0);
     const rateMode=settings?.bitrate_mode||'inherit';
     const customK=Number(settings?.bitrate_k||0)||Number(settings?.effective_bitrate_k||4000);
     const inherited=Number(settings?.inherited_bitrate_k||0);
@@ -155,11 +161,27 @@
                 <option value="original" ${audioMode==='original'?'selected':''}>Áudio original do vídeo</option>
                 <option value="library" ${audioMode==='library'?'selected':''}>Áudio da Biblioteca</option>
                 <option value="url" ${audioMode==='url'?'selected':''}>Áudio de URL externa</option>
+                <option value="mix_library" ${audioMode==='mix_library'?'selected':''}>Áudio original + Biblioteca</option>
+                <option value="mix_url" ${audioMode==='mix_url'?'selected':''}>Áudio original + URL externa</option>
               </select>
             </label>
             <label data-output-audio-library>Áudio da Biblioteca<select data-output-audio-file>${audioOptions}</select></label>
             <label data-output-audio-url-field>URL do áudio<input data-output-audio-url value="${esc(settings?.audio_url||'')}" placeholder="MP3, M4A, HLS ou vídeo do YouTube"></label>
-            <div class="hs-output-audio-note">Biblioteca/URL externa substitui completamente o áudio do vídeo desta saída. Em links do YouTube, somente a faixa de áudio é usada.</div>
+            <div data-output-audio-mix class="hs-output-audio-mix">
+              <label>Mixagem
+                <select data-output-audio-mix-profile>
+                  <option value="podcast" ${mixProfile==='podcast'?'selected':''}>Automático — podcast em destaque</option>
+                  <option value="balanced" ${mixProfile==='balanced'?'selected':''}>Balanceado — gameplay e externo</option>
+                  <option value="manual" ${mixProfile==='manual'?'selected':''}>Manual — definir níveis</option>
+                </select>
+              </label>
+              <div class="hs-output-audio-gains" data-output-audio-gains>
+                <label>Áudio original (dB)<input type="number" min="-30" max="12" step="1" data-output-audio-original-gain value="${esc(originalGain)}"></label>
+                <label>Áudio externo (dB)<input type="number" min="-30" max="12" step="1" data-output-audio-external-gain value="${esc(externalGain)}"></label>
+              </div>
+              <div class="hs-output-audio-note" data-output-audio-mix-note></div>
+            </div>
+            <div class="hs-output-audio-note">Biblioteca/URL externa substitui completamente o áudio do vídeo. Nas opções “original + ...”, os dois são misturados. Link do YouTube fornece apenas a faixa de áudio.</div>
           </div>
           <label>Bitrate desta saída
             <select data-output-bitrate-mode>
@@ -187,12 +209,28 @@
     const modeSelect=$('[data-output-source-mode]',box), localField=$('[data-output-local]',box), urlField=$('[data-output-url]',box);
     const videoSelect=$('[data-output-source-video]',box),urlInput=$('[data-output-source-url]',box);
     const audioModeSelect=$('[data-output-audio-mode]',box),audioLibraryField=$('[data-output-audio-library]',box),audioUrlField=$('[data-output-audio-url-field]',box),audioFileSelect=$('[data-output-audio-file]',box),audioUrlInput=$('[data-output-audio-url]',box);
+    const mixBox=$('[data-output-audio-mix]',box),mixProfileSelect=$('[data-output-audio-mix-profile]',box),mixGains=$('[data-output-audio-gains]',box),originalGainInput=$('[data-output-audio-original-gain]',box),externalGainInput=$('[data-output-audio-external-gain]',box),mixNote=$('[data-output-audio-mix-note]',box);
     const rateSelect=$('[data-output-bitrate-mode]',box), customField=$('[data-output-bitrate-custom]',box), customInput=$('[data-output-bitrate-k]',box), note=$('[data-output-bitrate-note]',box);
     const rerunCheck=$('[data-output-rerun-enabled]',box),rerunFields=$('[data-output-rerun-fields]',box),rerunHuman=$('[data-output-rerun-human]',box);
     const summary=$('[data-output-summary]',box),button=$('[data-output-source-save]',box);
 
     const paintSource=()=>{const value=modeSelect.value;localField.hidden=value!=='local';urlField.hidden=value!=='url';};
-    const paintAudio=()=>{const value=audioModeSelect.value;audioLibraryField.hidden=value!=='library';audioUrlField.hidden=value!=='url';};
+    const paintAudio=()=>{
+      const value=audioModeSelect.value;
+      const mixed=value==='mix_library'||value==='mix_url';
+      audioLibraryField.hidden=!(value==='library'||value==='mix_library');
+      audioUrlField.hidden=!(value==='url'||value==='mix_url');
+      mixBox.hidden=!mixed;
+      if(mixed){
+        const profile=mixProfileSelect.value;
+        mixGains.hidden=profile!=='manual';
+        mixNote.textContent=profile==='podcast'
+          ?'O podcast é normalizado e fica em primeiro plano; o gameplay abaixa automaticamente quando o áudio externo está presente.'
+          :profile==='balanced'
+            ?'Os dois áudios ficam em nível semelhante, com limitador para evitar clip.'
+            :'Use dB negativos para reduzir cada fonte. O limitador final continua ativo para evitar estouro.';
+      }
+    };
     const paintRate=()=>{
       const value=rateSelect.value;customField.hidden=value!=='custom';
       const effective=value==='custom'?Number(customInput.value||0):(value==='auto'?(youtube?recommended:inherited):inherited);
@@ -202,12 +240,12 @@
     const paintSummary=()=>{
       const source=modeSelect.value==='local'?(videoSelect.value?`Biblioteca: ${videoSelect.value}`:'Biblioteca'):modeSelect.value==='url'?'URL externa':'Fonte do canal';
       const rate=rateSelect.value==='custom'?mbps(Number(customInput.value||0)):rateSelect.value==='auto'?(youtube?`Auto ${mbps(recommended)}`:'Auto'):`Canal ${mbps(inherited)}`;
-      const audio=audioModeSelect.value==='original'?'Áudio original':audioModeSelect.value==='library'?(audioFileSelect.value?`Áudio: ${audioFileSelect.value}`:'Áudio: Biblioteca'):audioModeSelect.value==='url'?'Áudio: URL externa':'Áudio: canal';
+      const audio=audioModeSelect.value==='original'?'Áudio original':audioModeSelect.value==='library'?(audioFileSelect.value?`Áudio: ${audioFileSelect.value}`:'Áudio: Biblioteca'):audioModeSelect.value==='url'?'Áudio: URL externa':audioModeSelect.value==='mix_library'?'Mix original + Biblioteca':audioModeSelect.value==='mix_url'?'Mix original + URL':'Áudio: canal';
       const rerun=rerunCheck.checked?`Rerun ${formatTime(parseTime(rerunHuman.value))}`:'Rerun off';
       summary.innerHTML=`<span class="hs-output-summary-chip">${esc(source)}</span><span class="hs-output-summary-chip">${esc(audio)}</span><span class="hs-output-summary-chip">${esc(rate)}</span><span class="hs-output-summary-chip">${esc(rerun)}</span>`;
     };
     const repaint=()=>{paintSource();paintAudio();paintRate();paintRerun();paintSummary();};
-    [modeSelect,videoSelect,audioModeSelect,audioFileSelect,audioUrlInput,rateSelect,customInput,rerunCheck,rerunHuman,urlInput].forEach(el=>{
+    [modeSelect,videoSelect,audioModeSelect,audioFileSelect,audioUrlInput,mixProfileSelect,originalGainInput,externalGainInput,rateSelect,customInput,rerunCheck,rerunHuman,urlInput].forEach(el=>{
       if(!el)return;el.addEventListener(el.tagName==='SELECT'||el.type==='checkbox'?'change':'input',repaint);
     });
     repaint();

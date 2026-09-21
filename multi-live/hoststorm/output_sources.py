@@ -22,7 +22,8 @@ MANAGER = None
 STREAMING = None
 
 SOURCE_MODES = {'channel', 'local', 'url'}
-AUDIO_MODES = {'inherit', 'original', 'library', 'url'}
+AUDIO_MODES = {'inherit', 'original', 'library', 'url', 'mix_library', 'mix_url'}
+AUDIO_MIX_PROFILES = {'podcast', 'balanced', 'manual'}
 NODE_MODES = {'inherit', 'local', 'auto', 'specific'}
 
 
@@ -59,6 +60,8 @@ def apply_audio_override(channel: dict, destination: dict | None) -> dict:
         work['audio'] = name
         work['shorts_audio'] = name
         return work
+    # URL replacement and both mix modes need the source video's original audio mapped
+    # by the base command. A later wrapper adds/replaces the external audio as needed.
     work['audio'] = ''
     work['shorts_audio'] = ''
     return work
@@ -69,7 +72,7 @@ def validate_audio(destination: dict | None) -> tuple[bool, str]:
     mode = audio_mode(destination)
     if mode in {'inherit', 'original'}:
         return True, ''
-    if mode == 'library':
+    if mode in {'library', 'mix_library'}:
         name = safe_filename(destination.get('output_audio_file'))
         if not name:
             return False, 'Selecione um áudio da Biblioteca para esta saída.'
@@ -112,6 +115,114 @@ def _resolve_audio_url(url: str) -> str:
     if not lines:
         raise RuntimeError('yt-dlp não retornou uma URL de áudio reproduzível.')
     return lines[0]
+
+
+def _safe_gain_db(value, default: float) -> float:
+    try:
+        return max(-30.0, min(12.0, float(value)))
+    except Exception:
+        return float(default)
+
+
+def _audio_mix_profile(destination: dict | None) -> str:
+    destination = destination or {}
+    profile = str(destination.get('output_audio_mix_profile') or 'podcast').strip().lower()
+    return profile if profile in AUDIO_MIX_PROFILES else 'podcast'
+
+
+def _mix_gains(destination: dict | None) -> tuple[float, float]:
+    destination = destination or {}
+    profile = _audio_mix_profile(destination)
+    if profile == 'balanced':
+        return -6.0, -6.0
+    if profile == 'manual':
+        return (
+            _safe_gain_db(destination.get('output_audio_original_gain_db'), -10.0),
+            _safe_gain_db(destination.get('output_audio_external_gain_db'), 0.0),
+        )
+    # Podcast em destaque: o externo fica na frente e o gameplay é reduzido.
+    return -10.0, 0.0
+
+
+def _external_audio_source(destination: dict) -> str:
+    mode = audio_mode(destination)
+    if mode in {'library', 'mix_library'}:
+        name = safe_filename(destination.get('output_audio_file'))
+        if not name:
+            raise RuntimeError('Áudio da Biblioteca não selecionado.')
+        return str(AUDIOS_DIR / name)
+    return _resolve_audio_url(destination.get('output_audio_url'))
+
+
+def _strip_audio_map(cmd: list[str]) -> list[str]:
+    result = []
+    i = 0
+    while i < len(cmd):
+        if cmd[i] == '-map' and i + 1 < len(cmd) and ':a' in str(cmd[i + 1]):
+            i += 2
+            continue
+        result.append(cmd[i])
+        i += 1
+    return result
+
+
+def _inject_mixed_audio(cmd: list[str], audio_source: str, destination: dict) -> list[str]:
+    """Mix original program audio with an external/library source.
+
+    Podcast profile normalizes the external track and ducks gameplay while speech/audio
+    is present. Balanced keeps both at similar level. Manual uses the saved dB gains.
+    """
+    result = list(cmd or [])
+    next_input = sum(1 for token in result if token == '-i')
+    try:
+        insert_at = result.index('-map')
+    except ValueError:
+        try:
+            insert_at = result.index('-vf')
+        except ValueError:
+            positions = [i for i, token in enumerate(result) if token == '-f']
+            insert_at = positions[-1] if positions else max(0, len(result) - 1)
+
+    result[insert_at:insert_at] = ['-re', '-stream_loop', '-1', '-i', audio_source]
+    result = _strip_audio_map(result)
+
+    original_db, external_db = _mix_gains(destination)
+    profile = _audio_mix_profile(destination)
+    if profile == 'podcast':
+        graph = (
+            f'[0:a:0]aresample=44100:async=1:first_pts=0,volume={original_db:.1f}dB[game];'
+            f'[{next_input}:a:0]aresample=44100:async=1:first_pts=0,'
+            f'loudnorm=I=-16:TP=-1.5:LRA=11,volume={external_db:.1f}dB[podcast];'
+            f'[game][podcast]sidechaincompress=threshold=0.035:ratio=8:attack=20:release=650[ducked];'
+            f'[ducked][podcast]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,'
+            f'alimiter=limit=0.95[aout]'
+        )
+    else:
+        graph = (
+            f'[0:a:0]aresample=44100:async=1:first_pts=0,volume={original_db:.1f}dB[game];'
+            f'[{next_input}:a:0]aresample=44100:async=1:first_pts=0,volume={external_db:.1f}dB[external];'
+            f'[game][external]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,'
+            f'alimiter=limit=0.95[aout]'
+        )
+
+    try:
+        map_at = result.index('-map')
+    except ValueError:
+        map_at = insert_at + 4
+        result[map_at:map_at] = ['-map', '0:v:0']
+        map_at += 2
+
+    result[map_at:map_at] = ['-filter_complex', graph]
+    # Keep the video's existing map and add the mixed audio label after it.
+    map_positions = [i for i, token in enumerate(result) if token == '-map']
+    insert_map_at = map_positions[-1] + 2 if map_positions else map_at + 2
+    result[insert_map_at:insert_map_at] = ['-map', '[aout]']
+
+    if '-shortest' not in result:
+        positions = [i for i, token in enumerate(result) if token == '-f']
+        output_at = positions[-1] if positions else max(0, len(result) - 1)
+        result[output_at:output_at] = ['-shortest']
+    return result
 
 
 def _inject_external_audio(cmd: list[str], audio_url: str) -> list[str]:
@@ -263,15 +374,25 @@ def _update_destination_from_form(channel: dict, slug: str, include_transport=Fa
         if amode not in AUDIO_MODES:
             return None, 'Tipo de áudio inválido.'
         updated['output_audio_mode'] = amode
-        if amode == 'library':
+        if amode in {'library', 'mix_library'}:
             updated['output_audio_file'] = safe_filename(request.form.get('audio_file'))
             updated['output_audio_url'] = ''
-        elif amode == 'url':
+        elif amode in {'url', 'mix_url'}:
             updated['output_audio_file'] = ''
             updated['output_audio_url'] = str(request.form.get('audio_url') or '').strip()
         else:
             updated['output_audio_file'] = ''
             updated['output_audio_url'] = ''
+        mix_profile = str(request.form.get('audio_mix_profile') or destination.get('output_audio_mix_profile') or 'podcast').strip().lower()
+        if mix_profile not in AUDIO_MIX_PROFILES:
+            mix_profile = 'podcast'
+        updated['output_audio_mix_profile'] = mix_profile
+        updated['output_audio_original_gain_db'] = _safe_gain_db(
+            request.form.get('audio_original_gain_db'), destination.get('output_audio_original_gain_db', -10)
+        )
+        updated['output_audio_external_gain_db'] = _safe_gain_db(
+            request.form.get('audio_external_gain_db'), destination.get('output_audio_external_gain_db', 0)
+        )
 
     audio_ok, audio_error = validate_audio(updated)
     if not audio_ok:
@@ -340,6 +461,9 @@ def output_sources(cid):
             'audio_mode': audio_mode(destination),
             'audio_file': str(destination.get('output_audio_file') or ''),
             'audio_url': str(destination.get('output_audio_url') or ''),
+            'audio_mix_profile': _audio_mix_profile(destination),
+            'audio_original_gain_db': _mix_gains(destination)[0],
+            'audio_external_gain_db': _mix_gains(destination)[1],
             'node_mode': str(destination.get('output_node_mode') or 'inherit'),
             'node_id': str(destination.get('output_node_id') or ''),
         }
@@ -420,6 +544,8 @@ def install_output_sources(app, web_module, streaming_module):
         cmd = original_build_cmd(shadow, slug)
         if amode == 'url':
             cmd = _inject_external_audio(cmd, _resolve_audio_url(destination.get('output_audio_url')))
+        elif amode in {'mix_library', 'mix_url'}:
+            cmd = _inject_mixed_audio(cmd, _external_audio_source(destination), destination)
         return cmd
 
     def start_output(manager_obj, cid: str, slug: str):

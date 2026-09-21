@@ -191,10 +191,10 @@ def _media_for_output(channel: dict, slug: str) -> list[str]:
 def _audio_for_output(channel: dict, slug: str) -> list[str]:
     destination = ((channel.get('destinations') or {}).get(slug) or {})
     mode = str(destination.get('output_audio_mode') or 'inherit').strip().lower()
-    if mode == 'library':
+    if mode in {'library', 'mix_library'}:
         name = safe_filename(destination.get('output_audio_file'))
         return [name] if name else []
-    if mode in {'original', 'url'}:
+    if mode in {'original', 'url', 'mix_url'}:
         return []
 
     kind = multi_output.platform_kind(slug, destination)

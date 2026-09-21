@@ -213,3 +213,107 @@ def test_start_form_persists_per_output_library_audio(tmp_path, monkeypatch):
     assert updated['output_audio_mode'] == 'library'
     assert updated['output_audio_file'] == 'music.mp3'
     assert updated['output_audio_url'] == ''
+
+
+
+def test_audio_mode_supports_original_plus_external_mix():
+    assert output_sources.audio_mode({'output_audio_mode': 'mix_library'}) == 'mix_library'
+    assert output_sources.audio_mode({'output_audio_mode': 'mix_url'}) == 'mix_url'
+
+
+def test_mix_library_validation_uses_audio_library(tmp_path, monkeypatch):
+    monkeypatch.setattr(output_sources, 'AUDIOS_DIR', tmp_path)
+    destination = {'output_audio_mode': 'mix_library', 'output_audio_file': 'podcast.mp3'}
+    ok, message = output_sources.validate_audio(destination)
+    assert ok is False
+    assert 'não existe mais' in message
+    (tmp_path / 'podcast.mp3').write_bytes(b'audio')
+    ok, message = output_sources.validate_audio(destination)
+    assert ok is True
+    assert message == ''
+
+
+def test_podcast_mix_maps_original_and_external_with_ducking():
+    cmd = [
+        'ffmpeg', '-re', '-i', '/media/game.mp4',
+        '-map', '0:v:0', '-map', '0:a?',
+        '-vf', 'scale=1280:720',
+        '-c:v', 'libx264', '-c:a', 'aac',
+        '-f', 'flv', 'rtmp://example.test/live',
+    ]
+    destination = {
+        'output_audio_mode': 'mix_url',
+        'output_audio_mix_profile': 'podcast',
+    }
+    result = output_sources._inject_mixed_audio(
+        cmd, 'https://cdn.example.test/podcast.mp3', destination,
+    )
+    assert result.count('-i') == 2
+    assert '-filter_complex' in result
+    graph = result[result.index('-filter_complex') + 1]
+    assert 'sidechaincompress' in graph
+    assert 'loudnorm=I=-16' in graph
+    maps = [result[i + 1] for i, token in enumerate(result[:-1]) if token == '-map']
+    assert '0:v:0' in maps
+    assert '[aout]' in maps
+    assert '0:a?' not in maps
+    assert '-shortest' in result
+
+
+def test_balanced_mix_uses_equal_default_gains_without_ducking():
+    cmd = [
+        'ffmpeg', '-i', '/media/game.mp4',
+        '-map', '0:v:0', '-map', '0:a?',
+        '-c:a', 'aac', '-f', 'flv', 'rtmp://example.test/live',
+    ]
+    destination = {
+        'output_audio_mode': 'mix_library',
+        'output_audio_mix_profile': 'balanced',
+    }
+    result = output_sources._inject_mixed_audio(cmd, '/media/podcast.mp3', destination)
+    graph = result[result.index('-filter_complex') + 1]
+    assert 'sidechaincompress' not in graph
+    assert graph.count('volume=-6.0dB') == 2
+    assert 'amix=inputs=2:duration=first' in graph
+
+
+def test_manual_mix_clamps_and_uses_saved_gains():
+    destination = {
+        'output_audio_mix_profile': 'manual',
+        'output_audio_original_gain_db': -18,
+        'output_audio_external_gain_db': 3,
+    }
+    assert output_sources._mix_gains(destination) == (-18.0, 3.0)
+    assert output_sources._safe_gain_db(-99, 0) == -30.0
+    assert output_sources._safe_gain_db(99, 0) == 12.0
+
+
+def test_form_persists_mix_profile_and_manual_gains(tmp_path, monkeypatch):
+    monkeypatch.setattr(output_sources, 'VIDEOS_DIR', tmp_path)
+    monkeypatch.setattr(output_sources, 'AUDIOS_DIR', tmp_path)
+    (tmp_path / 'game.mp4').write_bytes(b'video')
+    (tmp_path / 'podcast.mp3').write_bytes(b'audio')
+    channel = {
+        'destinations': {
+            'youtube__mix': {
+                'rtmp_url': 'rtmp://a.rtmp.youtube.com/live2',
+                'stream_key': 'key',
+            }
+        }
+    }
+    app = Flask(__name__)
+    with app.test_request_context(method='POST', data={
+        'mode': 'local',
+        'video': 'game.mp4',
+        'audio_mode': 'mix_library',
+        'audio_file': 'podcast.mp3',
+        'audio_mix_profile': 'manual',
+        'audio_original_gain_db': '-15',
+        'audio_external_gain_db': '-2',
+    }):
+        updated, error = output_sources._update_destination_from_form(channel, 'youtube__mix')
+    assert error == ''
+    assert updated['output_audio_mode'] == 'mix_library'
+    assert updated['output_audio_mix_profile'] == 'manual'
+    assert updated['output_audio_original_gain_db'] == -15.0
+    assert updated['output_audio_external_gain_db'] == -2.0
