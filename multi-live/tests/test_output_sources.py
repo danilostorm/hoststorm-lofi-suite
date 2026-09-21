@@ -253,6 +253,10 @@ def test_podcast_mix_maps_original_and_external_with_ducking():
     graph = result[result.index('-filter_complex') + 1]
     assert 'sidechaincompress' in graph
     assert 'loudnorm=I=-16' in graph
+    assert 'asplit=2[podcast_sidechain][podcast_mix]' in graph
+    assert '[game][podcast_sidechain]sidechaincompress' in graph
+    assert '[ducked][podcast_mix]amix' in graph
+    assert '[podcast]' not in graph
     maps = [result[i + 1] for i, token in enumerate(result[:-1]) if token == '-map']
     assert '0:v:0' in maps
     assert '[aout]' in maps
