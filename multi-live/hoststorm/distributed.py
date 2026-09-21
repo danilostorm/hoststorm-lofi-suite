@@ -10,7 +10,7 @@ from types import MethodType
 from urllib.parse import quote, urlsplit
 
 from . import db
-from .config import VIDEOS_DIR
+from .config import VIDEOS_DIR, AUDIOS_DIR
 from .pro_db import list_nodes, update_node_health
 from .security import encrypt_secret
 from .utils import now_iso
@@ -34,7 +34,7 @@ def _request(node, path, method='GET', payload=None, timeout=12):
         return json.loads(r.read().decode('utf-8'))
 
 
-def _upload_file(node, path: Path):
+def _upload_file(node, path: Path, kind='video'):
     base = str(node.get('base_url') or '').rstrip('/')
     if not base:
         raise RuntimeError('Nó sem URL base.')
@@ -43,7 +43,8 @@ def _upload_file(node, path: Path):
         raise RuntimeError('URL do nó precisa usar HTTP/HTTPS.')
     conn_cls = http.client.HTTPSConnection if parsed.scheme == 'https' else http.client.HTTPConnection
     conn = conn_cls(parsed.hostname, port=parsed.port, timeout=3600)
-    remote_path = (parsed.path.rstrip('/') if parsed.path else '') + '/api/v1/agent/media/' + quote(path.name)
+    endpoint = 'audio' if str(kind) == 'audio' else 'media'
+    remote_path = (parsed.path.rstrip('/') if parsed.path else '') + f'/api/v1/agent/{endpoint}/' + quote(path.name)
     size = path.stat().st_size
     try:
         conn.putrequest('PUT', remote_path)
@@ -93,6 +94,29 @@ def _sync_media(node, ch, media):
         if int(info.get('size') or -1) == local.stat().st_size:
             continue
         _upload_file(node, local)
+        synced.append(name)
+    return synced
+
+
+
+def _sync_audio(node, names):
+    raw = names if isinstance(names, (list, tuple)) else ([names] if names else [])
+    wanted = []
+    for name in raw:
+        safe = Path(str(name or '')).name
+        if safe and safe not in wanted and (AUDIOS_DIR / safe).is_file():
+            wanted.append(safe)
+    if not wanted:
+        return []
+    manifest = _request(node, '/api/v1/agent/audio/manifest', timeout=15)
+    remote = manifest.get('items') or {}
+    synced = []
+    for name in wanted:
+        local = AUDIOS_DIR / name
+        info = remote.get(name) or {}
+        if int(info.get('size') or -1) == local.stat().st_size:
+            continue
+        _upload_file(node, local, 'audio')
         synced.append(name)
     return synced
 
