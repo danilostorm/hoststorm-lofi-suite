@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import copy
+import shutil
+import subprocess
 import urllib.parse
 from types import MethodType
 
 from flask import Blueprint, abort, jsonify, request
 
-from .config import VIDEOS_DIR
+from .config import VIDEOS_DIR, AUDIOS_DIR
 from .utils import build_target, now_iso, safe_filename
 from .url_sources import validate_remote_url
 from . import multi_output
@@ -20,6 +22,7 @@ MANAGER = None
 STREAMING = None
 
 SOURCE_MODES = {'channel', 'local', 'url'}
+AUDIO_MODES = {'inherit', 'original', 'library', 'url'}
 NODE_MODES = {'inherit', 'local', 'auto', 'specific'}
 
 
@@ -27,6 +30,130 @@ def source_mode(destination: dict | None) -> str:
     destination = destination or {}
     mode = str(destination.get('output_source_mode') or 'channel').strip().lower()
     return mode if mode in SOURCE_MODES else 'channel'
+
+
+def audio_mode(destination: dict | None) -> str:
+    destination = destination or {}
+    mode = str(destination.get('output_audio_mode') or 'inherit').strip().lower()
+    return mode if mode in AUDIO_MODES else 'inherit'
+
+
+def apply_audio_override(channel: dict, destination: dict | None) -> dict:
+    """Apply only the audio policy owned by one RTMP destination.
+
+    Original removes channel-level replacement audio so FFmpeg maps the source video's
+    own audio. Library points both horizontal and vertical paths to one library file.
+    URL clears inherited audio; the URL is injected as a dedicated FFmpeg input later.
+    """
+    work = copy.deepcopy(channel or {})
+    destination = destination or {}
+    mode = audio_mode(destination)
+    if mode == 'inherit':
+        return work
+    if mode == 'original':
+        work['audio'] = ''
+        work['shorts_audio'] = ''
+        return work
+    if mode == 'library':
+        name = safe_filename(destination.get('output_audio_file'))
+        work['audio'] = name
+        work['shorts_audio'] = name
+        return work
+    work['audio'] = ''
+    work['shorts_audio'] = ''
+    return work
+
+
+def validate_audio(destination: dict | None) -> tuple[bool, str]:
+    destination = destination or {}
+    mode = audio_mode(destination)
+    if mode in {'inherit', 'original'}:
+        return True, ''
+    if mode == 'library':
+        name = safe_filename(destination.get('output_audio_file'))
+        if not name:
+            return False, 'Selecione um áudio da Biblioteca para esta saída.'
+        if not (AUDIOS_DIR / name).is_file():
+            return False, f'O áudio "{name}" não existe mais na Biblioteca.'
+        return True, ''
+    url = str(destination.get('output_audio_url') or '').strip()
+    if not url:
+        return False, 'Informe a URL de áudio desta saída.'
+    try:
+        validate_remote_url(url)
+    except Exception as exc:
+        return False, str(exc)
+    return True, ''
+
+
+def _is_direct_audio_url(url: str) -> bool:
+    path = urllib.parse.urlparse(str(url or '')).path.lower()
+    return any(path.endswith(ext) for ext in (
+        '.mp3', '.m4a', '.aac', '.flac', '.ogg', '.opus', '.wav',
+        '.mp4', '.m4v', '.mov', '.mkv', '.webm', '.m3u8',
+    ))
+
+
+def _resolve_audio_url(url: str) -> str:
+    """Resolve a webpage such as YouTube to an audio-only media URL."""
+    url = validate_remote_url(url)
+    if _is_direct_audio_url(url):
+        return url
+    ytdlp = shutil.which('yt-dlp')
+    if not ytdlp:
+        raise RuntimeError('yt-dlp não está disponível para resolver o áudio externo.')
+    proc = subprocess.run(
+        [ytdlp, '--no-playlist', '--no-warnings', '-f', 'bestaudio/best', '-g', url],
+        capture_output=True, text=True, timeout=60,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError('Falha resolvendo áudio externo: ' + (proc.stderr or proc.stdout or '')[-900:])
+    lines = [line.strip() for line in (proc.stdout or '').splitlines() if line.strip()]
+    if not lines:
+        raise RuntimeError('yt-dlp não retornou uma URL de áudio reproduzível.')
+    return lines[0]
+
+
+def _inject_external_audio(cmd: list[str], audio_url: str) -> list[str]:
+    """Add an audio input and map it instead of the source video's audio."""
+    result = list(cmd or [])
+    next_input = sum(1 for token in result if token == '-i')
+    try:
+        insert_at = result.index('-map')
+    except ValueError:
+        try:
+            insert_at = result.index('-vf')
+        except ValueError:
+            positions = [i for i, token in enumerate(result) if token == '-f']
+            insert_at = positions[-1] if positions else max(0, len(result) - 1)
+
+    result[insert_at:insert_at] = ['-re', '-stream_loop', '-1', '-i', audio_url]
+    audio_map = f'{next_input}:a:0'
+    replaced = False
+    i = insert_at + 4
+    while i < len(result) - 1:
+        if result[i] == '-map':
+            current = str(result[i + 1])
+            if ':a' in current:
+                result[i + 1] = audio_map
+                replaced = True
+                break
+            i += 2
+            continue
+        i += 1
+    if not replaced:
+        try:
+            video_map = result.index('-map', insert_at + 4)
+            result[video_map + 2:video_map + 2] = ['-map', audio_map]
+        except ValueError:
+            result[insert_at + 4:insert_at + 4] = ['-map', '0:v:0', '-map', audio_map]
+
+    # Replacement audio loops forever. Shortest lets finite/rerun video end naturally.
+    if '-shortest' not in result:
+        positions = [i for i, token in enumerate(result) if token == '-f']
+        output_at = positions[-1] if positions else max(0, len(result) - 1)
+        result[output_at:output_at] = ['-shortest']
+    return result
 
 
 def apply_source_override(channel: dict, destination: dict | None) -> dict:
@@ -131,6 +258,25 @@ def _update_destination_from_form(channel: dict, slug: str, include_transport=Fa
     updated['output_node_mode'] = node_mode
     updated['output_node_id'] = node_id
 
+    if 'audio_mode' in request.form:
+        amode = str(request.form.get('audio_mode') or 'inherit').strip().lower()
+        if amode not in AUDIO_MODES:
+            return None, 'Tipo de áudio inválido.'
+        updated['output_audio_mode'] = amode
+        if amode == 'library':
+            updated['output_audio_file'] = safe_filename(request.form.get('audio_file'))
+            updated['output_audio_url'] = ''
+        elif amode == 'url':
+            updated['output_audio_file'] = ''
+            updated['output_audio_url'] = str(request.form.get('audio_url') or '').strip()
+        else:
+            updated['output_audio_file'] = ''
+            updated['output_audio_url'] = ''
+
+    audio_ok, audio_error = validate_audio(updated)
+    if not audio_ok:
+        return None, audio_error
+
     if include_transport:
         rtmp_url = str(request.form.get('rtmp_url') or '').strip()
         if rtmp_url:
@@ -164,6 +310,7 @@ def output_sources(cid):
     if not channel:
         abort(404)
     videos = sorted([p.name for p in VIDEOS_DIR.iterdir() if p.is_file()], key=lambda value: value.casefold())
+    audios = sorted([p.name for p in AUDIOS_DIR.iterdir() if p.is_file()], key=lambda value: value.casefold())
     nodes = [
         {
             'id': str(node.get('id') or ''),
@@ -190,10 +337,13 @@ def output_sources(cid):
             'inherited_bitrate_k': inherited_k(channel, slug, destination),
             'recommended_bitrate_k': youtube_recommended_k(channel, slug, destination),
             'effective_bitrate_k': target_bitrate_k(channel, slug, destination),
+            'audio_mode': audio_mode(destination),
+            'audio_file': str(destination.get('output_audio_file') or ''),
+            'audio_url': str(destination.get('output_audio_url') or ''),
             'node_mode': str(destination.get('output_node_mode') or 'inherit'),
             'node_id': str(destination.get('output_node_id') or ''),
         }
-    return jsonify({'ok': True, 'channel_id': cid, 'videos': videos, 'nodes': nodes, 'outputs': outputs})
+    return jsonify({'ok': True, 'channel_id': cid, 'videos': videos, 'audios': audios, 'nodes': nodes, 'outputs': outputs})
 
 
 @output_sources_bp.route('/lives/<cid>/outputs/<slug>/source', methods=['POST'])
@@ -213,7 +363,7 @@ def save_output_source(cid, slug):
     except Exception:
         pass
     if running:
-        return _json_or_error(True, 'Fonte, bitrate e servidor salvos. Reinicie somente esta saída para aplicar.')
+        return _json_or_error(True, 'Fonte, áudio, bitrate e servidor salvos. Reinicie somente esta saída para aplicar.')
     return _json_or_error(True, 'Configuração desta saída salva.')
 
 
@@ -245,17 +395,32 @@ def install_output_sources(app, web_module, streaming_module):
     original_start_output = multi_output._start_output
 
     def build_cmd(self, session, slug):
-        if session.trigger != 'manual':
-            return original_build_cmd(session, slug)
         destination = ((session.work_channel or {}).get('destinations') or {}).get(slug) or {}
-        if source_mode(destination) == 'channel':
+        source_override = session.trigger == 'manual' and source_mode(destination) != 'channel'
+        amode = audio_mode(destination)
+        audio_override = amode != 'inherit'
+        if not source_override and not audio_override:
             return original_build_cmd(session, slug)
-        ok, error = validate_source(destination)
-        if not ok:
-            raise RuntimeError(error)
+
+        work = copy.deepcopy(session.work_channel or {})
+        if source_override:
+            ok, error = validate_source(destination)
+            if not ok:
+                raise RuntimeError(error)
+            work = apply_source_override(work, destination)
+
+        if audio_override:
+            ok, error = validate_audio(destination)
+            if not ok:
+                raise RuntimeError(error)
+            work = apply_audio_override(work, destination)
+
         shadow = copy.copy(session)
-        shadow.work_channel = apply_source_override(session.work_channel or {}, destination)
-        return original_build_cmd(shadow, slug)
+        shadow.work_channel = work
+        cmd = original_build_cmd(shadow, slug)
+        if amode == 'url':
+            cmd = _inject_external_audio(cmd, _resolve_audio_url(destination.get('output_audio_url')))
+        return cmd
 
     def start_output(manager_obj, cid: str, slug: str):
         channel = WEB.get_channel(cid) if WEB else None
