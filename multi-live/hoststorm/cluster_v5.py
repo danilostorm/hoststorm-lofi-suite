@@ -10,7 +10,7 @@ from types import MethodType
 from flask import Blueprint, abort, jsonify, request
 
 from . import db, multi_output
-from .distributed import _request, _sync_media
+from .distributed import _request, _sync_media, _sync_audio
 from .output_management import _set_output_desired
 from .pro_db import connect as pro_connect, list_nodes
 from .utils import now_iso, safe_filename
@@ -187,6 +187,28 @@ def _media_for_output(channel: dict, slug: str) -> list[str]:
     return []
 
 
+
+def _audio_for_output(channel: dict, slug: str) -> list[str]:
+    destination = ((channel.get('destinations') or {}).get(slug) or {})
+    mode = str(destination.get('output_audio_mode') or 'inherit').strip().lower()
+    if mode == 'library':
+        name = safe_filename(destination.get('output_audio_file'))
+        return [name] if name else []
+    if mode in {'original', 'url'}:
+        return []
+
+    kind = multi_output.platform_kind(slug, destination)
+    vertical = kind == 'youtube_shorts' or (
+        kind == 'kwai' and str(destination.get('mode') or 'horizontal') == 'vertical'
+    )
+    name = ''
+    if vertical and str(channel.get('shorts_audio') or '__same__') != '__same__':
+        name = safe_filename(channel.get('shorts_audio'))
+    if not name:
+        name = safe_filename(channel.get('audio'))
+    return [name] if name else []
+
+
 def _remote_snapshot(channel: dict, slug: str) -> dict:
     snapshot = copy.deepcopy(channel)
     snapshot['node_mode'] = 'local'
@@ -201,8 +223,10 @@ def _remote_snapshot(channel: dict, slug: str) -> dict:
 def _dispatch(node: dict, cid: str, slug: str, channel: dict) -> tuple[bool, str]:
     snapshot = _remote_snapshot(channel, slug)
     media = _media_for_output(snapshot, slug)
+    audio = _audio_for_output(snapshot, slug)
     synced = _sync_media(node, snapshot, media)
-    payload = {'channel': snapshot, 'slug': slug, 'media': media}
+    synced_audio = _sync_audio(node, audio)
+    payload = {'channel': snapshot, 'slug': slug, 'media': media, 'audio': audio}
     response = _request(
         node,
         f'/api/v1/agent/output/{cid}/{slug}/start',
@@ -214,7 +238,8 @@ def _dispatch(node: dict, cid: str, slug: str, channel: dict) -> tuple[bool, str
         raise RuntimeError(response.get('message') or response.get('error') or 'Agent recusou a saída.')
     _save_assignment(cid, slug, node['id'], payload, True, 0)
     _set_output_desired(cid, slug, True)
-    suffix = f' · {len(synced)} mídia(s) sincronizada(s)' if synced else ''
+    total_synced = len(synced) + len(synced_audio)
+    suffix = f' · {total_synced} arquivo(s) sincronizado(s)' if total_synced else ''
     return True, f"Live desta saída iniciada em {node.get('name') or node['id']}.{suffix}"
 
 
