@@ -6,7 +6,7 @@ from pathlib import Path
 from flask import Blueprint, jsonify, request
 
 from . import multi_output
-from .config import VIDEOS_DIR
+from .config import VIDEOS_DIR, AUDIOS_DIR
 from .distributed import upsert_snapshot
 from .pro_web import api_required
 
@@ -40,6 +40,48 @@ def media_upload(name):
     VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
     target = VIDEOS_DIR / safe
     temp = VIDEOS_DIR / ('.upload-' + safe + '.part')
+    total = 0
+    try:
+        with temp.open('wb') as fh:
+            while True:
+                chunk = request.stream.read(8 * 1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                fh.write(chunk)
+        os.replace(temp, target)
+    except Exception as exc:
+        try:
+            temp.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return jsonify({'ok': False, 'error': str(exc)}), 500
+    return jsonify({'ok': True, 'name': safe, 'size': total})
+
+
+
+@agent_cluster_bp.route('/api/v1/agent/audio/manifest')
+@api_required('agent')
+def audio_manifest():
+    AUDIOS_DIR.mkdir(parents=True, exist_ok=True)
+    items = {}
+    for path in AUDIOS_DIR.iterdir():
+        if not path.is_file():
+            continue
+        stat = path.stat()
+        items[path.name] = {'size': stat.st_size, 'mtime': int(stat.st_mtime)}
+    return jsonify({'ok': True, 'items': items})
+
+
+@agent_cluster_bp.route('/api/v1/agent/audio/<path:name>', methods=['PUT'])
+@api_required('agent')
+def audio_upload(name):
+    safe = _safe_name(name)
+    if not safe or safe in {'.', '..'}:
+        return jsonify({'ok': False, 'error': 'Nome de arquivo inválido.'}), 400
+    AUDIOS_DIR.mkdir(parents=True, exist_ok=True)
+    target = AUDIOS_DIR / safe
+    temp = AUDIOS_DIR / ('.upload-' + safe + '.part')
     total = 0
     try:
         with temp.open('wb') as fh:

@@ -1,4 +1,4 @@
-from hoststorm.cluster_v5 import _media_for_output, _remote_snapshot, _score, output_placement
+from hoststorm.cluster_v5 import _audio_for_output, _media_for_output, _remote_snapshot, _score, output_placement
 
 
 def test_output_placement_defaults_to_channel_local():
@@ -57,3 +57,45 @@ def test_media_for_individual_local_source():
         },
     }
     assert _media_for_output(channel, 'youtube__mk3') == ['MK3.mp4']
+
+
+def test_audio_for_individual_library_source():
+    channel = {
+        'audio': 'channel.mp3',
+        'destinations': {
+            'youtube__mk3': {
+                'output_audio_mode': 'library',
+                'output_audio_file': 'MK3-theme.mp3',
+            }
+        },
+    }
+    assert _audio_for_output(channel, 'youtube__mk3') == ['MK3-theme.mp3']
+
+
+def test_audio_for_original_or_url_does_not_sync_channel_audio():
+    channel = {
+        'audio': 'channel.mp3',
+        'destinations': {
+            'youtube__original': {'output_audio_mode': 'original'},
+            'youtube__url': {
+                'output_audio_mode': 'url',
+                'output_audio_url': 'https://example.com/audio.mp3',
+            },
+        },
+    }
+    assert _audio_for_output(channel, 'youtube__original') == []
+    assert _audio_for_output(channel, 'youtube__url') == []
+
+
+def test_audio_inherit_uses_vertical_override_when_present():
+    channel = {
+        'audio': 'horizontal.mp3',
+        'shorts_audio': 'vertical.mp3',
+        'destinations': {
+            'youtube_shorts__one': {
+                'platform': 'youtube_shorts',
+                'mode': 'vertical',
+            }
+        },
+    }
+    assert _audio_for_output(channel, 'youtube_shorts__one') == ['vertical.mp3']

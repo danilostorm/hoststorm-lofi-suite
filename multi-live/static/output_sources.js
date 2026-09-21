@@ -38,7 +38,8 @@
       .hs-output-source-help{margin:10px 0;font-size:.72rem;opacity:.62;line-height:1.4}
       .hs-output-source-grid{display:grid;grid-template-columns:1fr;gap:9px}.hs-output-source-row{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end;margin-top:10px}
       .hs-output-source-status{font-size:.72rem;min-height:1em;opacity:.72}.hs-output-source-status.ok{color:#67e39c;opacity:1}.hs-output-source-status.error{color:#ff8585;opacity:1}.hs-output-source-status.busy{color:#f5c76f;opacity:1}
-      .hs-output-bitrate-note,.hs-output-rerun-note{font-size:.72rem;opacity:.7;margin-top:-2px}.hs-output-bitrate-note strong,.hs-output-rerun-note strong{color:#7ee8ae}
+      .hs-output-bitrate-note,.hs-output-rerun-note,.hs-output-audio-note{font-size:.72rem;opacity:.7;margin-top:-2px}.hs-output-bitrate-note strong,.hs-output-rerun-note strong{color:#7ee8ae}
+      .hs-output-audio{padding:10px;border:1px solid rgba(125,145,185,.16);border-radius:9px;background:rgba(54,215,140,.025);display:grid;gap:9px}.hs-output-audio label{margin:0}
       .hs-output-rerun{padding:10px;border:1px solid rgba(125,145,185,.16);border-radius:9px;background:rgba(82,127,255,.035)}
       .hs-output-rerun-head{display:flex;align-items:center;justify-content:space-between;gap:10px}.hs-output-rerun-head label{margin:0;display:flex;align-items:center;gap:8px;font-weight:700}.hs-output-rerun-fields{margin-top:9px}
       .hs-output-source-box [hidden]{display:none!important}
@@ -52,6 +53,9 @@
     fd.set('mode',$('[data-output-source-mode]',box)?.value||'channel');
     fd.set('video',$('[data-output-source-video]',box)?.value||'');
     fd.set('url',$('[data-output-source-url]',box)?.value.trim()||'');
+    fd.set('audio_mode',$('[data-output-audio-mode]',box)?.value||'inherit');
+    fd.set('audio_file',$('[data-output-audio-file]',box)?.value||'');
+    fd.set('audio_url',$('[data-output-audio-url]',box)?.value.trim()||'');
     fd.set('bitrate_mode',$('[data-output-bitrate-mode]',box)?.value||'inherit');
     fd.set('bitrate_k',$('[data-output-bitrate-k]',box)?.value||'0');
     if(includeTransport&&card){
@@ -112,9 +116,11 @@
     }
   }
 
-  function sourceBox(slug,settings,rerunSettings,videos){
+  function sourceBox(slug,settings,rerunSettings,videos,audios){
     const mode=settings?.mode||'channel';
     const currentVideo=settings?.video||'';
+    const audioMode=settings?.audio_mode||'inherit';
+    const currentAudio=settings?.audio_file||'';
     const rateMode=settings?.bitrate_mode||'inherit';
     const customK=Number(settings?.bitrate_k||0)||Number(settings?.effective_bitrate_k||4000);
     const inherited=Number(settings?.inherited_bitrate_k||0);
@@ -124,11 +130,12 @@
     const rerunEnabled=!!rerunSettings?.enabled;
     const rerunStart=Number(rerunSettings?.start_seconds||0);
     const options=['<option value="">Escolha um vídeo...</option>'].concat(videos.map(v=>`<option value="${esc(v)}" ${v===currentVideo?'selected':''}>${esc(v)}</option>`)).join('');
+    const audioOptions=['<option value="">Escolha um áudio...</option>'].concat(audios.map(a=>`<option value="${esc(a)}" ${a===currentAudio?'selected':''}>${esc(a)}</option>`)).join('');
     const box=document.createElement('details');
     box.className='hs-output-source-box';
     box.dataset.outputSource=slug;
     box.innerHTML=`
-      <summary><span>Conteúdo, qualidade e rerun</span><span class="hs-output-summary-text" data-output-summary></span></summary>
+      <summary><span>Conteúdo, áudio, qualidade e rerun</span><span class="hs-output-summary-text" data-output-summary></span></summary>
       <div class="hs-output-source-inner">
         <p class="hs-output-source-help">Configuração exclusiva desta live. “Usar fonte do canal” herda os padrões do topo; qualquer opção abaixo sobrescreve somente este destino.</p>
         <div class="hs-output-source-grid">
@@ -141,6 +148,19 @@
           </label>
           <label data-output-local>Vídeo da Biblioteca<select data-output-source-video>${options}</select></label>
           <label data-output-url>URL externa<input data-output-source-url value="${esc(settings?.url||'')}" placeholder="YouTube, HLS, MP4, RTMP..."></label>
+          <div class="hs-output-audio">
+            <label>Áudio desta saída
+              <select data-output-audio-mode>
+                <option value="inherit" ${audioMode==='inherit'?'selected':''}>Herdar áudio padrão do canal</option>
+                <option value="original" ${audioMode==='original'?'selected':''}>Áudio original do vídeo</option>
+                <option value="library" ${audioMode==='library'?'selected':''}>Áudio da Biblioteca</option>
+                <option value="url" ${audioMode==='url'?'selected':''}>Áudio de URL externa</option>
+              </select>
+            </label>
+            <label data-output-audio-library>Áudio da Biblioteca<select data-output-audio-file>${audioOptions}</select></label>
+            <label data-output-audio-url-field>URL do áudio<input data-output-audio-url value="${esc(settings?.audio_url||'')}" placeholder="MP3, M4A, HLS ou vídeo do YouTube"></label>
+            <div class="hs-output-audio-note">Biblioteca/URL externa substitui completamente o áudio do vídeo desta saída. Em links do YouTube, somente a faixa de áudio é usada.</div>
+          </div>
           <label>Bitrate desta saída
             <select data-output-bitrate-mode>
               ${youtube?`<option value="auto" ${rateMode==='auto'?'selected':''}>Automático YouTube recomendado (${mbps(recommended)})</option>`:`<option value="auto" ${rateMode==='auto'?'selected':''}>Automático</option>`}
@@ -166,11 +186,13 @@
 
     const modeSelect=$('[data-output-source-mode]',box), localField=$('[data-output-local]',box), urlField=$('[data-output-url]',box);
     const videoSelect=$('[data-output-source-video]',box),urlInput=$('[data-output-source-url]',box);
+    const audioModeSelect=$('[data-output-audio-mode]',box),audioLibraryField=$('[data-output-audio-library]',box),audioUrlField=$('[data-output-audio-url-field]',box),audioFileSelect=$('[data-output-audio-file]',box),audioUrlInput=$('[data-output-audio-url]',box);
     const rateSelect=$('[data-output-bitrate-mode]',box), customField=$('[data-output-bitrate-custom]',box), customInput=$('[data-output-bitrate-k]',box), note=$('[data-output-bitrate-note]',box);
     const rerunCheck=$('[data-output-rerun-enabled]',box),rerunFields=$('[data-output-rerun-fields]',box),rerunHuman=$('[data-output-rerun-human]',box);
     const summary=$('[data-output-summary]',box),button=$('[data-output-source-save]',box);
 
     const paintSource=()=>{const value=modeSelect.value;localField.hidden=value!=='local';urlField.hidden=value!=='url';};
+    const paintAudio=()=>{const value=audioModeSelect.value;audioLibraryField.hidden=value!=='library';audioUrlField.hidden=value!=='url';};
     const paintRate=()=>{
       const value=rateSelect.value;customField.hidden=value!=='custom';
       const effective=value==='custom'?Number(customInput.value||0):(value==='auto'?(youtube?recommended:inherited):inherited);
@@ -180,11 +202,12 @@
     const paintSummary=()=>{
       const source=modeSelect.value==='local'?(videoSelect.value?`Biblioteca: ${videoSelect.value}`:'Biblioteca'):modeSelect.value==='url'?'URL externa':'Fonte do canal';
       const rate=rateSelect.value==='custom'?mbps(Number(customInput.value||0)):rateSelect.value==='auto'?(youtube?`Auto ${mbps(recommended)}`:'Auto'):`Canal ${mbps(inherited)}`;
+      const audio=audioModeSelect.value==='original'?'Áudio original':audioModeSelect.value==='library'?(audioFileSelect.value?`Áudio: ${audioFileSelect.value}`:'Áudio: Biblioteca'):audioModeSelect.value==='url'?'Áudio: URL externa':'Áudio: canal';
       const rerun=rerunCheck.checked?`Rerun ${formatTime(parseTime(rerunHuman.value))}`:'Rerun off';
-      summary.innerHTML=`<span class="hs-output-summary-chip">${esc(source)}</span><span class="hs-output-summary-chip">${esc(rate)}</span><span class="hs-output-summary-chip">${esc(rerun)}</span>`;
+      summary.innerHTML=`<span class="hs-output-summary-chip">${esc(source)}</span><span class="hs-output-summary-chip">${esc(audio)}</span><span class="hs-output-summary-chip">${esc(rate)}</span><span class="hs-output-summary-chip">${esc(rerun)}</span>`;
     };
-    const repaint=()=>{paintSource();paintRate();paintRerun();paintSummary();};
-    [modeSelect,videoSelect,rateSelect,customInput,rerunCheck,rerunHuman,urlInput].forEach(el=>{
+    const repaint=()=>{paintSource();paintAudio();paintRate();paintRerun();paintSummary();};
+    [modeSelect,videoSelect,audioModeSelect,audioFileSelect,audioUrlInput,rateSelect,customInput,rerunCheck,rerunHuman,urlInput].forEach(el=>{
       if(!el)return;el.addEventListener(el.tagName==='SELECT'||el.type==='checkbox'?'change':'input',repaint);
     });
     repaint();
@@ -222,11 +245,12 @@
       if(rerunResponse.ok)rerunPayload=await rerunResponse.json();
     }catch(_){return;}
     const videos=Array.isArray(sourcePayload.videos)?sourcePayload.videos:[];
+    const audios=Array.isArray(sourcePayload.audios)?sourcePayload.audios:[];
     const outputs=sourcePayload.outputs||{},reruns=rerunPayload.outputs||{};
     $$('.destination-card',grid).forEach(card=>{
       if($('.hs-output-source-box',card))return;
       const toggle=card.querySelector('input[type="checkbox"][name$="_enabled"]');if(!toggle)return;
-      const slug=toggle.name.slice(0,-8);const box=sourceBox(slug,outputs[slug]||{},reruns[slug]||{},videos);const actions=$('.hs-output-actions',card);
+      const slug=toggle.name.slice(0,-8);const box=sourceBox(slug,outputs[slug]||{},reruns[slug]||{},videos,audios);const actions=$('.hs-output-actions',card);
       if(actions)card.insertBefore(box,actions);else card.appendChild(box);
     });
     if(!grid.dataset.outputSourceStartBound){
