@@ -192,9 +192,11 @@ def _inject_mixed_audio(cmd: list[str], audio_source: str, destination: dict) ->
         graph = (
             f'[0:a:0]aresample=44100:async=1:first_pts=0,volume={original_db:.1f}dB[game];'
             f'[{next_input}:a:0]aresample=44100:async=1:first_pts=0,'
-            f'loudnorm=I=-16:TP=-1.5:LRA=11,volume={external_db:.1f}dB[podcast];'
-            f'[game][podcast]sidechaincompress=threshold=0.035:ratio=8:attack=20:release=650[ducked];'
-            f'[ducked][podcast]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,'
+            f'loudnorm=I=-16:TP=-1.5:LRA=11,volume={external_db:.1f}dB,'
+            f'asplit=2[podcast_sidechain][podcast_mix];'
+            f'[game][podcast_sidechain]sidechaincompress='
+            f'threshold=0.035:ratio=8:attack=20:release=650[ducked];'
+            f'[ducked][podcast_mix]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,'
             f'alimiter=limit=0.95[aout]'
         )
     else:
