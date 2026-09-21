@@ -118,3 +118,98 @@ def test_start_form_keeps_saved_stream_key_when_password_field_is_blank(tmp_path
         )
     assert error == ''
     assert updated['stream_key'] == 'encrypted-existing-key'
+
+
+def test_audio_mode_defaults_to_inherit():
+    assert output_sources.audio_mode({}) == 'inherit'
+    assert output_sources.audio_mode({'output_audio_mode': 'invalid'}) == 'inherit'
+    assert output_sources.audio_mode({'output_audio_mode': 'original'}) == 'original'
+    assert output_sources.audio_mode({'output_audio_mode': 'library'}) == 'library'
+    assert output_sources.audio_mode({'output_audio_mode': 'url'}) == 'url'
+
+
+def test_original_audio_override_removes_channel_replacement_audio():
+    channel = {
+        'audio': 'music.mp3',
+        'shorts_audio': '__same__',
+    }
+    work = output_sources.apply_audio_override(channel, {'output_audio_mode': 'original'})
+    assert work['audio'] == ''
+    assert work['shorts_audio'] == ''
+    assert channel['audio'] == 'music.mp3'
+
+
+def test_library_audio_override_sets_horizontal_and_vertical_audio():
+    work = output_sources.apply_audio_override(
+        {'audio': '', 'shorts_audio': '__same__'},
+        {'output_audio_mode': 'library', 'output_audio_file': 'soundtrack.mp3'},
+    )
+    assert work['audio'] == 'soundtrack.mp3'
+    assert work['shorts_audio'] == 'soundtrack.mp3'
+
+
+def test_library_audio_validation_requires_library_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(output_sources, 'AUDIOS_DIR', tmp_path)
+    destination = {'output_audio_mode': 'library', 'output_audio_file': 'theme.mp3'}
+    ok, message = output_sources.validate_audio(destination)
+    assert ok is False
+    assert 'não existe mais' in message
+
+    (tmp_path / 'theme.mp3').write_bytes(b'test')
+    ok, message = output_sources.validate_audio(destination)
+    assert ok is True
+    assert message == ''
+
+
+def test_external_audio_mapping_mutes_original_video_audio():
+    cmd = [
+        'ffmpeg', '-re', '-i', '/media/video.mp4',
+        '-map', '0:v:0', '-map', '0:a?',
+        '-c:v', 'libx264', '-c:a', 'aac',
+        '-f', 'flv', 'rtmp://example.test/live',
+    ]
+    result = output_sources._inject_external_audio(
+        cmd, 'https://cdn.example.test/music.mp3',
+    )
+    maps = [result[i + 1] for i, token in enumerate(result[:-1]) if token == '-map']
+    assert '0:v:0' in maps
+    assert '1:a:0' in maps
+    assert '0:a?' not in maps
+    assert '-shortest' in result
+    assert result.count('-i') == 2
+
+
+def test_start_form_persists_per_output_library_audio(tmp_path, monkeypatch):
+    video_dir = tmp_path / 'videos'
+    audio_dir = tmp_path / 'audios'
+    video_dir.mkdir()
+    audio_dir.mkdir()
+    monkeypatch.setattr(output_sources, 'VIDEOS_DIR', video_dir)
+    monkeypatch.setattr(output_sources, 'AUDIOS_DIR', audio_dir)
+    (video_dir / 'game.mp4').write_bytes(b'video')
+    (audio_dir / 'music.mp3').write_bytes(b'audio')
+    channel = {
+        'destinations': {
+            'youtube_shorts__audio': {
+                'rtmp_url': 'rtmp://a.rtmp.youtube.com/live2',
+                'stream_key': 'key',
+                'output_source_mode': 'local',
+                'output_source_video': 'game.mp4',
+            }
+        }
+    }
+    app = Flask(__name__)
+    with app.test_request_context(method='POST', data={
+        'mode': 'local',
+        'video': 'game.mp4',
+        'audio_mode': 'library',
+        'audio_file': 'music.mp3',
+        'audio_url': '',
+    }):
+        updated, error = output_sources._update_destination_from_form(
+            channel, 'youtube_shorts__audio',
+        )
+    assert error == ''
+    assert updated['output_audio_mode'] == 'library'
+    assert updated['output_audio_file'] == 'music.mp3'
+    assert updated['output_audio_url'] == ''
