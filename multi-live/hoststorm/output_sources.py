@@ -24,6 +24,15 @@ STREAMING = None
 SOURCE_MODES = {'channel', 'local', 'url'}
 AUDIO_MODES = {'inherit', 'original', 'library', 'url', 'mix_library', 'mix_url'}
 AUDIO_MIX_PROFILES = {'podcast', 'balanced', 'manual'}
+# YouTube/web audio should never spend bandwidth on a normal video representation when
+# an adaptive audio stream exists. Only the emergency fallback may use combined A/V,
+# and it is deliberately capped at 144p / worst quality.
+EXTERNAL_AUDIO_SELECTOR = (
+    'bestaudio[acodec!=none][abr<=192]/'
+    'bestaudio[acodec!=none]/'
+    'best[acodec!=none][height<=144]/'
+    'worst[acodec!=none]'
+)
 NODE_MODES = {'inherit', 'local', 'auto', 'specific'}
 
 
@@ -106,7 +115,11 @@ def _resolve_audio_url(url: str) -> str:
     if not ytdlp:
         raise RuntimeError('yt-dlp não está disponível para resolver o áudio externo.')
     proc = subprocess.run(
-        [ytdlp, '--no-playlist', '--no-warnings', '-f', 'bestaudio/best', '-g', url],
+        [
+            ytdlp, '--no-playlist', '--no-warnings',
+            '--socket-timeout', '15', '--retries', '3', '--fragment-retries', '3',
+            '-f', EXTERNAL_AUDIO_SELECTOR, '-g', url,
+        ],
         capture_output=True, text=True, timeout=60,
     )
     if proc.returncode != 0:
