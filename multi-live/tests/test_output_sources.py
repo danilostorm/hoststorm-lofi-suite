@@ -321,3 +321,42 @@ def test_form_persists_mix_profile_and_manual_gains(tmp_path, monkeypatch):
     assert updated['output_audio_mix_profile'] == 'manual'
     assert updated['output_audio_original_gain_db'] == -15.0
     assert updated['output_audio_external_gain_db'] == -2.0
+
+
+
+def test_youtube_audio_resolution_prefers_audio_only_and_caps_video_fallback(monkeypatch):
+    captured = {}
+
+    class Proc:
+        returncode = 0
+        stdout = 'https://rr.example.test/audio-only.m4a\n'
+        stderr = ''
+
+    monkeypatch.setattr(output_sources.shutil, 'which', lambda name: '/usr/bin/yt-dlp')
+
+    def fake_run(cmd, **kwargs):
+        captured['cmd'] = list(cmd)
+        captured['kwargs'] = dict(kwargs)
+        return Proc()
+
+    monkeypatch.setattr(output_sources.subprocess, 'run', fake_run)
+    resolved = output_sources._resolve_audio_url('https://www.youtube.com/watch?v=test123')
+    assert resolved == 'https://rr.example.test/audio-only.m4a'
+    cmd = captured['cmd']
+    selector = cmd[cmd.index('-f') + 1]
+    assert selector == output_sources.EXTERNAL_AUDIO_SELECTOR
+    assert selector.startswith('bestaudio')
+    assert 'height<=144' in selector
+    assert 'bestaudio/best' not in selector
+    assert cmd[cmd.index('--socket-timeout') + 1] == '15'
+    assert cmd[cmd.index('--retries') + 1] == '3'
+
+
+def test_direct_audio_url_skips_ytdlp(monkeypatch):
+    monkeypatch.setattr(
+        output_sources.subprocess,
+        'run',
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('yt-dlp não deveria ser chamado')),
+    )
+    url = 'https://cdn.example.test/podcast.mp3'
+    assert output_sources._resolve_audio_url(url) == url
