@@ -181,7 +181,7 @@
               </div>
               <div class="hs-output-audio-note" data-output-audio-mix-note></div>
             </div>
-            <div class="hs-output-audio-note">Biblioteca/URL externa substitui completamente o áudio do vídeo. Nas opções “original + ...”, os dois são misturados. Link do YouTube fornece apenas a faixa de áudio.</div>
+            <div class="hs-output-audio-note">Biblioteca/URL externa substitui completamente o áudio do vídeo. Nas opções “original + ...”, os dois são misturados. No YouTube, o HostStorm busca primeiro uma faixa somente de áudio; vídeo só é fallback de emergência e fica limitado à menor qualidade (até 144p).</div>
           </div>
           <label>Bitrate desta saída
             <select data-output-bitrate-mode>
