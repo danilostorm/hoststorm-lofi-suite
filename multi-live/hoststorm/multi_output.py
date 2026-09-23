@@ -9,6 +9,8 @@ import uuid
 from pathlib import Path
 from types import MethodType
 
+import psutil
+
 from flask import Blueprint, abort, flash, jsonify, redirect, request, url_for
 
 from .config import DEFAULT_CHANNEL_SETTINGS, DEFAULT_DESTINATIONS
@@ -79,6 +81,40 @@ def _kill(process):
         except Exception:
             pass
 
+
+def _kill_orphan_publishers(cid: str, slug: str) -> int:
+    """Kill FFmpeg publishers for this exact RTMP target that are no longer tracked.
+
+    A startup race in older versions could leave one publisher alive after its PlatformState
+    had been replaced. Matching the exact target (including stream key) keeps the cleanup
+    scoped to one destination and gives 'Parar só esta' a reliable emergency path.
+    """
+    channel = WEB.get_channel(cid, False) if WEB else None
+    destination = ((channel or {}).get('destinations') or {}).get(slug) or {}
+    target = build_target(destination.get('rtmp_url'), destination.get('stream_key'))
+    if not target:
+        return 0
+    killed = 0
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+        try:
+            name = str((proc.info or {}).get('name') or '').lower()
+            cmdline = [str(x) for x in ((proc.info or {}).get('cmdline') or [])]
+            if 'ffmpeg' not in name and not any('ffmpeg' in x.lower() for x in cmdline[:1]):
+                continue
+            if target not in cmdline and target not in ' '.join(cmdline):
+                continue
+            proc.terminate()
+            try:
+                proc.wait(timeout=4)
+            except psutil.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=2)
+            killed += 1
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+        except Exception:
+            continue
+    return killed
 
 def _update_run_platforms(run_id: str, platforms: list[str]):
     if not DB or not run_id:
@@ -198,9 +234,13 @@ def _stop_output(manager, cid: str, slug: str, reason='parada individual') -> tu
         if not any(_running(getattr(session.platform_states.get(p), 'process', None)) for p in session.platforms):
             _stop_parallel_session(manager, session, reason)
 
+    orphan_count = _kill_orphan_publishers(cid, slug)
+    if orphan_count:
+        stopped = True
+
     if stopped:
         try:
-            STREAMING.audit('info', 'platform_stopped_individually', cid, f'Destino {slug} encerrado individualmente.', {'platform': slug})
+            STREAMING.audit('info', 'platform_stopped_individually', cid, f'Destino {slug} encerrado individualmente.', {'platform': slug, 'orphan_processes': orphan_count})
             STREAMING.BUS.publish('platform_stopped', {'channel_id': cid, 'slug': slug, 'reason': reason})
         except Exception:
             pass
