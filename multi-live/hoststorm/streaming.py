@@ -68,9 +68,18 @@ class StreamManager:
         try:
             from .db import list_channels
             for cid,ch in list_channels(False).items():
-                if ch.get('desired_running') and not self.channel_status(cid).get('running'):
-                    ok,msg=self.start(cid,trigger='manual')
-                    self.log(cid,'Retomada 24/7 após reinício: '+msg)
+                if not ch.get('desired_running') or self.channel_status(cid).get('running'):
+                    continue
+                if getattr(self, '_hs_per_output_desired_enabled', False):
+                    destinations = ch.get('destinations') or {}
+                    explicit = any('manual_desired_running' in d for d in destinations.values())
+                    if explicit:
+                        # Modern installs recover individual outputs through the per-output
+                        # watchdog/checkpoint engine. Starting the whole channel here would
+                        # resurrect destinations the user explicitly stopped.
+                        continue
+                ok,msg=self.start(cid,trigger='manual')
+                self.log(cid,'Retomada 24/7 após reinício: '+msg)
         except Exception as e:
             audit('error','resume_247_error','',str(e))
 
