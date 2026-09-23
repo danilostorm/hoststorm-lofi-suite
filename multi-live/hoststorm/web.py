@@ -50,7 +50,15 @@ def _status_channels():
         st=MANAGER.channel_status(cid)
         ch['runtime']=st
         ch['running']=st.get('running',False)
-        ch['active_platforms']=[slug for slug,s in st.get('platforms',{}).items() if s.get('running')]
+        states=st.get('platforms',{}) or {}
+        ch['active_platforms']=[slug for slug,s in states.items() if s.get('running')]
+        pending_desired=any(
+            bool(d.get('manual_desired_running')) and not bool((states.get(slug) or {}).get('running'))
+            for slug,d in (ch.get('destinations') or {}).items()
+        )
+        retrying=any(not s.get('running') and int(s.get('retries') or 0)>0 for s in states.values())
+        recovery_reconnecting=str((st.get('recovery') or {}).get('status') or '')=='reconnecting'
+        ch['reconnecting']=bool(not ch['running'] and (pending_desired or retrying or recovery_reconnecting))
     return channels
 
 
@@ -101,6 +109,7 @@ def healthz(): return jsonify({'ok':True,'version':version()})
 def dashboard():
     channels=_status_channels(); schedules=list_schedules(); history=list_history(20)
     running=sum(1 for c in channels.values() if c['running'])
+    reconnecting=sum(1 for c in channels.values() if c.get('reconnecting'))
     today=now_dt().date(); due_today=[]
     for s in schedules:
         # Build today's candidate even if not due yet.
@@ -115,7 +124,7 @@ def dashboard():
         if s.get('time','')>=current_hm: next_schedule=s; break
     failures=sum(1 for h in history if h.get('status') in {'failed','error'})
     return render_template('dashboard.html',channels=channels,schedules=schedules,due_today=due_today,next_schedule=next_schedule,history=history,
-                           stats={'running':running,'channels':len(channels),'schedules':sum(1 for x in schedules if x.get('enabled')),'failures':failures,'cpu':psutil.cpu_percent(interval=.05),'ram':psutil.virtual_memory().percent,'disk':psutil.disk_usage('/').percent})
+                           stats={'running':running,'reconnecting':reconnecting,'channels':len(channels),'schedules':sum(1 for x in schedules if x.get('enabled')),'failures':failures,'cpu':psutil.cpu_percent(interval=.05),'ram':psutil.virtual_memory().percent,'disk':psutil.disk_usage('/').percent})
 
 @bp.route('/lives')
 def lives(): return render_template('lives.html',channels=_status_channels())
