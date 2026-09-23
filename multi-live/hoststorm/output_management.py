@@ -51,6 +51,50 @@ def _set_output_desired(cid: str, slug: str, desired: bool) -> bool:
     return True
 
 
+def _output_desired_state(cid: str, slug: str):
+    """Return (is_explicit, desired) for one destination."""
+    if not DB:
+        return False, False
+    with DB.connect() as con:
+        row = con.execute(
+            'SELECT settings_json FROM destinations WHERE channel_id=? AND slug=?',
+            (str(cid), str(slug)),
+        ).fetchone()
+    if not row:
+        return False, False
+    settings = _json_settings(row['settings_json'])
+    if 'manual_desired_running' not in settings:
+        return False, False
+    return True, _truthy(settings.get('manual_desired_running'))
+
+
+def _mark_output_stopped(cid: str, slug: str, reason='parada individual'):
+    """Persist an individual stop in both destination state and recovery checkpoint."""
+    try:
+        _set_output_desired(cid, slug, False)
+    except Exception:
+        pass
+    try:
+        from .recovery import remove_platform_from_checkpoint
+        remove_platform_from_checkpoint(cid, slug, reason)
+    except Exception:
+        pass
+
+
+def _recovery_owns_output(cid: str, slug: str) -> bool:
+    """True while channel recovery is responsible for restarting this desired output."""
+    try:
+        from .recovery import get_checkpoint
+        state = get_checkpoint(cid) or {}
+    except Exception:
+        return False
+    if str(state.get('trigger') or 'manual') != 'manual':
+        return False
+    if not state.get('resume_enabled') or str(state.get('status') or '') not in {'running', 'reconnecting'}:
+        return False
+    platforms = {str(x) for x in (state.get('platforms') or [])}
+    return not platforms or str(slug) in platforms
+
 def _clear_channel_desired(cid: str):
     if not DB:
         return
@@ -100,11 +144,17 @@ def _seed_desired_from_recovery():
             continue
         destinations = channel.get('destinations') or {}
         for slug in list(state.get('platforms') or []):
-            if slug in destinations:
-                try:
-                    _set_output_desired(cid, slug, True)
-                except Exception:
-                    pass
+            if slug not in destinations:
+                continue
+            # Migration is allowed only when the flag did not exist in older versions.
+            # An explicit False means the user stopped this output and is authoritative.
+            explicit, _desired = _output_desired_state(cid, slug)
+            if explicit:
+                continue
+            try:
+                _set_output_desired(cid, slug, True)
+            except Exception:
+                pass
 
 
 def _json_result(ok: bool, message: str, status=200):
@@ -158,6 +208,7 @@ def install_output_management(app, db_module, web_module, streaming_module):
     original_manager_stop = manager.stop
     original_start_threads = manager.start_threads
     manager._hs_output_watchdog_started = False
+    manager._hs_per_output_desired_enabled = True
 
     def start_output(manager_obj, cid: str, slug: str):
         ok, message = original_start_output(manager_obj, cid, slug)
@@ -169,18 +220,19 @@ def install_output_management(app, db_module, web_module, streaming_module):
         return ok, message
 
     def stop_output(manager_obj, cid: str, slug: str, reason='parada individual'):
-        try:
-            _set_output_desired(cid, slug, False)
-        except Exception:
-            pass
+        _mark_output_stopped(cid, slug, reason)
         return original_stop_output(manager_obj, cid, slug, reason)
 
     def stop(self, cid, *args, **kwargs):
+        reason = str(args[0] if args else kwargs.get('reason', 'manual') or 'manual')
         with self.lock:
             session = self.sessions.get(cid)
             was_manual = bool(session and str(getattr(session, 'trigger', '')) == 'manual')
         result = original_manager_stop(cid, *args, **kwargs)
-        if was_manual:
+        # A UI/manual stop must clear persistent output intent even when the in-memory
+        # session is already missing/reconnecting. This is the exact ghost-live case.
+        manual_request = was_manual or 'manual' in reason.lower() or reason.lower() in {'canal removido', 'destino rtmp removido'}
+        if manual_request:
             try:
                 _clear_channel_desired(cid)
             except Exception:
@@ -212,6 +264,11 @@ def install_output_management(app, db_module, web_module, streaming_module):
                     if platform.get('running'):
                         attempts.pop((cid, slug), None)
                         next_attempt.pop((cid, slug), None)
+                        continue
+                    # Persistent checkpoint recovery owns manual restarts first. The old
+                    # watchdog used to race it after Docker boot, creating duplicate FFmpeg
+                    # publishers where one could become invisible to the dashboard.
+                    if _recovery_owns_output(cid, slug):
                         continue
                     # The normal FFmpeg supervisor already owns an in-process reconnect.
                     # Do not race it by spawning a second publisher for the same key.
