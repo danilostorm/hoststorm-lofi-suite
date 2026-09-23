@@ -225,7 +225,11 @@ def manual_resume_platforms(db_module, channel_id, platforms=None):
     destinations = channel.get('destinations') or {}
     candidates = list(platforms or [])
     if not candidates:
-        candidates = list(destinations)
+        candidates = [
+            slug for slug, destination in destinations.items()
+            if destination.get('manual_desired_running') is True
+            or ('manual_desired_running' not in destination and destination.get('enabled'))
+        ]
 
     result = []
     for slug in candidates:
