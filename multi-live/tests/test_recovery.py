@@ -67,3 +67,45 @@ def test_non_looping_url_seek_keeps_absolute_position():
         work_channel={'_schedule_source_url': 'https://youtube.com/watch?v=abc', '_repeat_playlist': False},
     )
     assert recovery._seek_for_session(session, 245.0) == 245.0
+
+
+
+def test_remove_platform_from_checkpoint_prevents_stopped_output_resume(tmp_path, monkeypatch):
+    _tmp_db(tmp_path, monkeypatch)
+    recovery.save_checkpoint(
+        'channel-a', 'game.mp4', 30, 'local', 'run-1', 100,
+        trigger='manual', platforms=['kick', 'youtube'], media=['game.mp4'],
+        elapsed_seconds=30, status='running', resume_enabled=True,
+    )
+    remaining = recovery.remove_platform_from_checkpoint('channel-a', 'kick', 'parada individual')
+    assert remaining == ['youtube']
+    state = recovery.get_checkpoint('channel-a')
+    assert state['platforms'] == ['youtube']
+    assert state['resume_enabled'] == 1
+
+    remaining = recovery.remove_platform_from_checkpoint('channel-a', 'youtube', 'parada individual')
+    assert remaining == []
+    state = recovery.get_checkpoint('channel-a')
+    assert state['platforms'] == []
+    assert state['status'] == 'stopped'
+    assert state['resume_enabled'] == 0
+
+
+def test_manual_resume_platforms_respects_explicit_false_and_keeps_legacy():
+    class FakeDB:
+        @staticmethod
+        def get_channel(cid, include_schedules=False):
+            return {
+                'destinations': {
+                    'kick': {'enabled': True, 'manual_desired_running': False},
+                    'youtube': {'enabled': True, 'manual_desired_running': True},
+                    'twitch': {'enabled': True},
+                    'kwai': {'enabled': False},
+                }
+            }
+
+    assert recovery.manual_resume_platforms(
+        FakeDB, 'channel-a', ['kick', 'youtube', 'twitch']
+    ) == ['youtube', 'twitch']
+    # With no checkpoint platform list, legacy fallback considers enabled outputs only.
+    assert recovery.manual_resume_platforms(FakeDB, 'channel-a', []) == ['youtube', 'twitch']
