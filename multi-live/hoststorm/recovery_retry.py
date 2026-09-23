@@ -4,7 +4,7 @@ import threading
 import time
 from types import MethodType
 
-from .recovery import _is_stale, _remaining_seconds, list_resumable, mark_state
+from .recovery import _is_stale, _remaining_seconds, list_resumable, mark_state, manual_resume_platforms
 
 
 RETRY_BACKOFF = (5, 15, 30, 60, 60, 60)
@@ -57,6 +57,13 @@ def install_recovery_retry(manager, streaming_module, db_module):
 
                     trigger = str(state.get('trigger') or 'manual')
                     platforms = list(state.get('platforms') or [])
+                    if trigger == 'manual':
+                        platforms = manual_resume_platforms(db_module, cid, platforms)
+                        if not platforms:
+                            mark_state(cid, 'stopped', 'Nenhuma saída manual está marcada para retomada.', False)
+                            attempts.pop(cid, None)
+                            next_attempt.pop(cid, None)
+                            continue
                     media = list(state.get('media') or [])
                     schedule = dict(state.get('schedule') or {})
                     if trigger == 'scheduled':
