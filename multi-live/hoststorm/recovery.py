@@ -175,6 +175,73 @@ def mark_state(channel_id, status, reason='', resume_enabled=None):
         con.execute(f"UPDATE playback_recovery_state SET {','.join(fields)} WHERE id=?", values)
 
 
+def remove_platform_from_checkpoint(channel_id, slug, reason='parada individual'):
+    """Remove one stopped output from the persistent channel checkpoint.
+
+    Recovery is stored per channel for historical reasons, while output controls are now
+    per destination. Without pruning this list, a Docker restart can resurrect an output
+    the user already stopped. When the last platform is removed, recovery is disabled.
+    """
+    ensure_recovery_table()
+    sid = _state_id(channel_id)
+    with connect() as con:
+        row = con.execute(
+            'SELECT platforms_json,resume_enabled,status FROM playback_recovery_state WHERE id=?',
+            (sid,),
+        ).fetchone()
+        if not row:
+            return []
+        platforms = _json_load(row['platforms_json'], [])
+        remaining = [str(p) for p in platforms if str(p) != str(slug)]
+        if remaining:
+            con.execute(
+                'UPDATE playback_recovery_state SET platforms_json=?,last_reason=?,updated_at=? WHERE id=?',
+                (json.dumps(remaining, ensure_ascii=False), str(reason or ''), now_iso(), sid),
+            )
+        else:
+            con.execute(
+                "UPDATE playback_recovery_state SET platforms_json='[]',status='stopped',"
+                "resume_enabled=0,last_reason=?,updated_at=? WHERE id=?",
+                (str(reason or ''), now_iso(), sid),
+            )
+    return remaining
+
+
+def manual_resume_platforms(db_module, channel_id, platforms=None):
+    """Honor explicit per-output manual desired state during boot recovery.
+
+    Missing manual_desired_running means legacy data and remains eligible. Once the
+    flag exists, False is authoritative and must never be overwritten by an old checkpoint.
+    """
+    try:
+        channel = db_module.get_channel(str(channel_id), False)
+    except TypeError:
+        channel = db_module.get_channel(str(channel_id))
+    except Exception:
+        channel = None
+    if not channel:
+        return list(platforms or [])
+
+    destinations = channel.get('destinations') or {}
+    candidates = list(platforms or [])
+    if not candidates:
+        candidates = [
+            slug for slug, destination in destinations.items()
+            if destination.get('manual_desired_running') is True
+            or ('manual_desired_running' not in destination and destination.get('enabled'))
+        ]
+
+    result = []
+    for slug in candidates:
+        destination = destinations.get(str(slug)) or {}
+        if 'manual_desired_running' not in destination:
+            result.append(str(slug))
+            continue
+        value = destination.get('manual_desired_running')
+        if value is True or str(value or '').strip().lower() in {'1', 'true', 'yes', 'on', 'sim'}:
+            result.append(str(slug))
+    return result
+
 def _parse_iso(value):
     try:
         dt = datetime.fromisoformat(str(value or '').replace('Z', '+00:00'))
@@ -475,6 +542,11 @@ def install_recovery_engine(manager, streaming_module, db_module):
 
                 trigger = str(state.get('trigger') or 'manual')
                 platforms = list(state.get('platforms') or [])
+                if trigger == 'manual':
+                    platforms = manual_resume_platforms(db_module, cid, platforms)
+                    if not platforms:
+                        mark_state(cid, 'stopped', 'Nenhuma saída manual está marcada para retomada.', False)
+                        continue
                 media = list(state.get('media') or [])
                 schedule = dict(state.get('schedule') or {})
                 if trigger == 'scheduled':

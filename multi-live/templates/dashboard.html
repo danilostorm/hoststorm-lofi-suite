@@ -4,7 +4,7 @@
 {% block subheading %}Visão geral das transmissões, agenda e saúde do servidor.{% endblock %}
 {% block content %}
 <div class="stats-grid">
-  <div class="metric"><span>AO VIVO</span><strong>{{ stats.running }}</strong><small>de {{ stats.channels }} canais</small></div>
+  <div class="metric"><span>AO VIVO</span><strong>{{ stats.running }}</strong><small>de {{ stats.channels }} canais{% if stats.reconnecting %} · {{ stats.reconnecting }} reconectando{% endif %}</small></div>
   <div class="metric"><span>AGENDAS ATIVAS</span><strong>{{ stats.schedules }}</strong><small>{{ due_today|length }} para hoje</small></div>
   <div class="metric"><span>CPU</span><strong data-metric="cpu">{{ stats.cpu }}%</strong><small>uso atual</small></div>
   <div class="metric"><span>RAM</span><strong data-metric="ram">{{ stats.ram }}%</strong><small>uso atual</small></div>
@@ -14,11 +14,11 @@
 <div class="dashboard-grid">
   <div class="panel span-2"><div class="panel-head"><div><h2>Ao vivo agora</h2><p>Status individual por plataforma.</p></div><a class="btn ghost" href="{{ url_for('web.lives') }}">Ver todas</a></div>
     <div class="live-list">
-    {% set any_running=false %}
-    {% for cid,ch in channels.items() %}{% if ch.running %}{% set any_running=true %}
-      <div class="live-row"><div><span class="status-pill live">● AO VIVO</span><h3>{{ ch.name }}</h3><div class="platform-line">{% for slug,p in ch.runtime.platforms.items() %}<span class="platform-chip {% if p.running %}ok{% else %}bad{% endif %}">{{ p.label }}</span>{% endfor %}</div></div><div class="live-actions"><a class="btn ghost" href="{{ url_for('web.live_edit',cid=cid) }}">Abrir</a><form action="{{ url_for('web.live_stop',cid=cid) }}" method="post"><button class="btn danger">Parar</button></form></div></div>
+    {% set ns=namespace(any_active=false) %}
+    {% for cid,ch in channels.items() %}{% if ch.running or ch.reconnecting %}{% set ns.any_active=true %}
+      <div class="live-row"><div><span class="status-pill {% if ch.running %}live{% else %}offline{% endif %}">{% if ch.running %}● AO VIVO{% else %}↻ RECONECTANDO{% endif %}</span><h3>{{ ch.name }}</h3><div class="platform-line">{% for slug,p in ch.runtime.platforms.items() %}<span class="platform-chip {% if p.running %}ok{% else %}bad{% endif %}">{{ p.label }}{% if not p.running and p.retries %} · reconectando{% endif %}</span>{% endfor %}</div></div><div class="live-actions"><a class="btn ghost" href="{{ url_for('web.live_edit',cid=cid) }}">Abrir</a><form action="{{ url_for('web.live_stop',cid=cid) }}" method="post"><button class="btn danger">Parar</button></form></div></div>
     {% endif %}{% endfor %}
-    {% if stats.running==0 %}<div class="empty-state">Nenhuma transmissão em andamento.</div>{% endif %}
+    {% if not ns.any_active %}<div class="empty-state">Nenhuma transmissão em andamento.</div>{% endif %}
     </div>
   </div>
   <div class="panel"><div class="panel-head"><div><h2>Próxima live</h2><p>Horário de Brasília.</p></div></div>

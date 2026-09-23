@@ -67,3 +67,40 @@ def test_frame_rate_conversion_drops_do_not_create_false_warning():
 
 def test_drops_still_warn_when_realtime_delivery_is_degraded():
     assert quality_label(29.0, 30, 10000, 10000, 0.90, 500) == 'warning'
+
+
+
+def test_seed_from_recovery_never_overwrites_explicit_manual_stop(tmp_path, monkeypatch):
+    import hoststorm.recovery as recovery
+
+    db = FakeDB(tmp_path / 'seed.db')
+    with db.connect() as con:
+        con.execute('CREATE TABLE destinations(channel_id TEXT,slug TEXT,settings_json TEXT)')
+        con.execute(
+            'INSERT INTO destinations(channel_id,slug,settings_json) VALUES(?,?,?)',
+            ('channel-a', 'kick', '{"manual_desired_running":false}'),
+        )
+        con.execute(
+            'INSERT INTO destinations(channel_id,slug,settings_json) VALUES(?,?,?)',
+            ('channel-a', 'youtube', '{}'),
+        )
+    monkeypatch.setattr(output_management, 'DB', db)
+
+    class FakeWeb:
+        @staticmethod
+        def get_channel(cid, include_schedules=False):
+            return {'destinations': {'kick': {}, 'youtube': {}}}
+
+    monkeypatch.setattr(output_management, 'WEB', FakeWeb)
+    monkeypatch.setattr(
+        recovery, 'list_resumable',
+        lambda: [{'trigger': 'manual', 'channel_id': 'channel-a', 'platforms': ['kick', 'youtube']}],
+    )
+    output_management._seed_desired_from_recovery()
+
+    explicit, desired = output_management._output_desired_state('channel-a', 'kick')
+    assert explicit is True
+    assert desired is False
+    explicit, desired = output_management._output_desired_state('channel-a', 'youtube')
+    assert explicit is True
+    assert desired is True
