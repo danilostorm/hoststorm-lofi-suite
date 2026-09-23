@@ -11,7 +11,7 @@ from flask import Blueprint, abort, jsonify, request
 
 from . import db, multi_output
 from .distributed import _request, _sync_media, _sync_audio
-from .output_management import _set_output_desired
+from .output_management import _mark_output_stopped, _set_output_desired
 from .pro_db import connect as pro_connect, list_nodes
 from .utils import now_iso, safe_filename
 
@@ -247,7 +247,7 @@ def _stop_remote(assignment: dict, reason='parada individual') -> tuple[bool, st
     node = _node(assignment.get('node_id'))
     if not node:
         _delete_assignment(assignment['channel_id'], assignment['slug'])
-        _set_output_desired(assignment['channel_id'], assignment['slug'], False)
+        _mark_output_stopped(assignment['channel_id'], assignment['slug'], reason)
         return True, 'Saída removida do cluster; nó anterior não está mais cadastrado.'
     try:
         response = _request(
@@ -264,7 +264,7 @@ def _stop_remote(assignment: dict, reason='parada individual') -> tuple[bool, st
         message = 'Agent indisponível: ' + str(exc)
     if ok:
         _delete_assignment(assignment['channel_id'], assignment['slug'])
-        _set_output_desired(assignment['channel_id'], assignment['slug'], False)
+        _mark_output_stopped(assignment['channel_id'], assignment['slug'], reason)
     return ok, message
 
 
