@@ -87,23 +87,94 @@
 <script>
 (()=>{
   const form=document.getElementById('clusterInstallForm');if(!form)return;
-  const button=document.getElementById('clusterInstallButton'),state=document.getElementById('clusterInstallState'),log=document.getElementById('clusterInstallLog');
+  const button=document.getElementById('clusterInstallButton');
+  const state=document.getElementById('clusterInstallState');
+  const log=document.getElementById('clusterInstallLog');
+  const title=document.getElementById('clusterInstallTitle');
+  const subtitle=document.getElementById('clusterInstallSubtitle');
+  const banner=document.getElementById('clusterUpdateBanner');
+  const cancelUpdate=document.getElementById('clusterInstallCancelUpdate');
+  const panel=document.getElementById('clusterInstallPanel');
   let timer=null;
+
+  const resetInstallMode=()=>{
+    form.reset();
+    form.elements.node_id.value='';
+    title.textContent='Instalar novo servidor';
+    subtitle.textContent='Informe o acesso SSH uma única vez. O HostStorm prepara Docker, Agent, token e registra o nó automaticamente.';
+    banner.hidden=true;banner.textContent='';
+    cancelUpdate.hidden=true;
+    button.textContent='Instalar e registrar servidor';
+    state.textContent='';
+    log.textContent='Aguardando instalação…';
+  };
+
+  document.querySelectorAll('.js-node-edit').forEach(btn=>btn.addEventListener('click',()=>{
+    const card=btn.closest('[data-node-card]');
+    const edit=card?.querySelector('.cluster-node-edit');if(!edit)return;
+    edit.hidden=!edit.hidden;
+  }));
+  document.querySelectorAll('.js-node-edit-cancel').forEach(btn=>btn.addEventListener('click',()=>{
+    const edit=btn.closest('.cluster-node-edit');if(edit)edit.hidden=true;
+  }));
+
+  document.querySelectorAll('.js-node-update-agent').forEach(btn=>btn.addEventListener('click',()=>{
+    resetInstallMode();
+    const baseUrl=btn.dataset.nodeUrl||'';
+    let host='';
+    try{
+      const parsed=new URL(baseUrl);
+      host=parsed.hostname||'';
+      form.elements.agent_port.value=parsed.port||((parsed.protocol==='https:')?'443':'3040');
+    }catch(_){host='';}
+    form.elements.node_id.value=btn.dataset.nodeId||'';
+    form.elements.name.value=btn.dataset.nodeName||'';
+    form.elements.host.value=host;
+    form.elements.base_url.value=baseUrl;
+    form.elements.priority.value=btn.dataset.nodePriority||'100';
+    form.elements.tags.value=btn.dataset.nodeTags||'';
+    form.elements.username.value='root';
+    form.elements.password.value='';
+    title.textContent='Atualizar HostStorm Agent';
+    subtitle.textContent='O mesmo bootstrap SSH será executado no servidor existente, mantendo o ID do nó e renovando o Agent/token.';
+    banner.hidden=false;
+    banner.textContent='Atualizando: '+(btn.dataset.nodeName||btn.dataset.nodeId)+'. Informe novamente usuário e senha SSH; a senha não será armazenada.';
+    cancelUpdate.hidden=false;
+    button.textContent='Atualizar Agent neste servidor';
+    panel?.scrollIntoView({behavior:'smooth',block:'start'});
+    setTimeout(()=>form.elements.password.focus(),350);
+  }));
+  cancelUpdate?.addEventListener('click',resetInstallMode);
+
   const paint=job=>{
     log.textContent=(job.logs||[]).join('\n')||job.message||'Processando…';log.scrollTop=log.scrollHeight;
     state.innerHTML=job.status==='success'?'<strong>✓ Servidor online</strong>':job.status==='error'?'<span style="color:#ff8585">✕ Falha</span>':'<span>● '+(job.message||'Instalando…')+'</span>';
-    if(job.status==='success'||job.status==='error'){clearInterval(timer);timer=null;button.disabled=false;if(job.status==='success')setTimeout(()=>location.reload(),1200);}
+    if(job.status==='success'||job.status==='error'){
+      clearInterval(timer);timer=null;button.disabled=false;
+      if(job.status==='success')setTimeout(()=>location.reload(),1200);
+    }
   };
   form.addEventListener('submit',async event=>{
-    event.preventDefault();button.disabled=true;state.textContent='Iniciando…';log.textContent='Preparando provisionamento…';
+    event.preventDefault();
+    const updating=!!form.elements.node_id.value;
+    button.disabled=true;
+    state.textContent=updating?'Atualizando…':'Iniciando…';
+    log.textContent=updating?'Preparando atualização do Agent…':'Preparando provisionamento…';
     try{
       const response=await fetch('/professional/nodes/install',{method:'POST',body:new FormData(form),headers:{'X-Requested-With':'HostStorm'},cache:'no-store'});
       const data=await response.json();if(!response.ok||!data.ok)throw new Error(data.message||`HTTP ${response.status}`);
       const id=data.job_id;
       timer=setInterval(async()=>{
-        try{const r=await fetch('/api/cluster/install/'+encodeURIComponent(id),{cache:'no-store'});const p=await r.json();if(r.ok&&p.ok)paint(p.job);}catch(_){/* retry */}
+        try{
+          const r=await fetch('/api/cluster/install/'+encodeURIComponent(id),{cache:'no-store'});
+          const p=await r.json();if(r.ok&&p.ok)paint(p.job);
+        }catch(_){/* retry */}
       },1500);
-    }catch(error){button.disabled=false;state.innerHTML='<span style="color:#ff8585">✕ '+String(error.message||error)+'</span>';log.textContent+=`\nERRO: ${error.message||error}`;}
+    }catch(error){
+      button.disabled=false;
+      state.innerHTML='<span style="color:#ff8585">✕ '+String(error.message||error)+'</span>';
+      log.textContent+='\nERRO: '+String(error.message||error);
+    }
   });
 })();
 </script>
