@@ -70,17 +70,22 @@
     const mode=String(settings.node_mode||'inherit'),nodeId=String(settings.node_id||'');
     const current=mode==='specific'&&nodeId?`specific:${nodeId}`:mode;
     const nodes=(payload.nodes||[]);
+    const activeNodes=nodes.filter(node=>node.status==='online'||node.status==='local');
     const options=[
       ['inherit','Herdar servidor do canal'],
       ['auto','Automático — melhor nó disponível'],
       ['local','Controlador local'],
     ];
-    nodes.forEach(node=>options.push([`specific:${node.id}`,`${node.name} · ${node.status==='online'?'online':'offline'} · CPU ${Math.round(Number(node.cpu||0))}% · ${node.active_streams||0} live(s)`]));
+    activeNodes.forEach(node=>options.push([`specific:${node.id}`,`${node.name} · online · CPU ${Math.round(Number(node.cpu||0))}% · ${node.active_streams||0} live(s)`]));
+    if(mode==='specific'&&nodeId&&!activeNodes.some(node=>String(node.id)===nodeId)){
+      const unavailable=nodes.find(node=>String(node.id)===nodeId);
+      options.push([`specific:${nodeId}`,`${unavailable?.name||nodeId} · indisponível`]);
+    }
     const panel=document.createElement('div');panel.className='hs-output-node';
     panel.innerHTML=`
-      <div class="hs-output-node-head"><strong>Servidor de transmissão</strong><span>${nodes.filter(n=>n.status==='online').length} nó(s) online</span></div>
+      <div class="hs-output-node-head"><strong>Servidor de transmissão</strong><span>${activeNodes.length} nó(s) online</span></div>
       <select data-output-node>${options.map(([v,l])=>`<option value="${esc(v)}" ${v===current?'selected':''}>${esc(l)}</option>`).join('')}</select>
-      <small>Automático considera prioridade, CPU, RAM, GPU e quantidade de lives. Servidor específico mantém esta saída fixa naquele Agent.</small>
+      <small>Automático considera prioridade, CPU, RAM, GPU e quantidade de lives. Em “Servidor específico” aparecem somente Agents ativos/online; um nó antigo indisponível é mostrado apenas para indicar a configuração atual.</small>
       <div class="hs-output-node-status"></div>`;
     const grid=$('.hs-output-source-grid',box),rerun=$('.hs-output-rerun',box);
     if(grid){if(rerun)grid.insertBefore(panel,rerun);else grid.appendChild(panel);}else box.appendChild(panel);
