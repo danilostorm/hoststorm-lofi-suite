@@ -376,9 +376,9 @@ def _update_destination_from_form(channel: dict, slug: str, include_transport=Fa
         return None, 'Modo de servidor inválido.'
     node_id = str(request.form.get('node_id') or destination.get('output_node_id') or '').strip()
     if node_mode == 'specific':
-        node = next((n for n in list_nodes() if str(n.get('id')) == node_id and n.get('enabled')), None)
+        node = next((n for n in list_nodes() if str(n.get('id')) == node_id and n.get('enabled') and n.get('status') in {'online','local'}), None)
         if not node:
-            return None, 'Servidor selecionado não existe ou está desabilitado.'
+            return None, 'Servidor selecionado não está ativo/online.'
     else:
         node_id = ''
     updated['output_node_mode'] = node_mode
