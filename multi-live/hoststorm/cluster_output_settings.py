@@ -28,9 +28,9 @@ def save_output_placement(cid, slug):
     if mode not in VALID_MODES:
         return jsonify({'ok': False, 'message': 'Modo de servidor inválido.'}), 400
     if mode == 'specific':
-        node = next((n for n in list_nodes() if str(n.get('id')) == node_id and n.get('enabled')), None)
+        node = next((n for n in list_nodes() if str(n.get('id')) == node_id and n.get('enabled') and n.get('status') in {'online','local'}), None)
         if not node:
-            return jsonify({'ok': False, 'message': 'Servidor selecionado não existe ou está desabilitado.'}), 400
+            return jsonify({'ok': False, 'message': 'Servidor selecionado não está ativo/online.'}), 400
     else:
         node_id = ''
 
