@@ -141,7 +141,18 @@ def live_edit(cid):
     if not ch: return redirect(url_for('web.lives'))
     ch['runtime']=MANAGER.channel_status(cid)
     for d in ch['destinations'].values(): d['masked_key']=_masked_key(d.get('stream_key'))
-    return render_template('live_edit.html',ch=ch,videos=list_files('video'),audios=list_files('audio'))
+    try:
+        from .pro_db import list_nodes
+        cluster_nodes=list_nodes()
+    except Exception:
+        cluster_nodes=[]
+    return render_template(
+        'live_edit.html',
+        ch=ch,
+        videos=list_files('video'),
+        audios=list_files('audio'),
+        cluster_nodes=cluster_nodes,
+    )
 
 @bp.route('/lives/<cid>/save',methods=['POST'])
 def live_save(cid):

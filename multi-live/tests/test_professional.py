@@ -131,3 +131,41 @@ def test_distributed_media_selection(tmp_path, monkeypatch):
         'maintenance_video': 'missing.mp4',
     }
     assert distributed._media_names(ch, ['main.mp4']) == ['main.mp4', 'backup.mp4']
+
+
+
+def test_node_crud_keeps_secret_and_tags(tmp_path, monkeypatch):
+    setup_db(tmp_path)
+    monkeypatch.setenv('HOSTSTORM_SECRET_KEY', 'cluster-node-test-key')
+    nid = pro_db.save_node({
+        'id': 'node-test',
+        'name': 'Servidor Teste',
+        'base_url': 'http://10.0.0.8:3040',
+        'token': 'hst_agent_secret',
+        'priority': 80,
+        'enabled': True,
+        'tags': ['gpu', 'nvenc'],
+    })
+    assert nid == 'node-test'
+    node = pro_db.get_node(nid)
+    assert node['name'] == 'Servidor Teste'
+    assert node['token'] == 'hst_agent_secret'
+    assert node['tags'] == ['gpu', 'nvenc']
+    assert node['priority'] == 80
+
+    # Editing with an empty token preserves the current encrypted credential.
+    pro_db.save_node({
+        **node,
+        'name': 'Servidor Editado',
+        'token': '',
+        'tags': ['gpu'],
+        'priority': 90,
+    })
+    edited = pro_db.get_node(nid)
+    assert edited['name'] == 'Servidor Editado'
+    assert edited['token'] == 'hst_agent_secret'
+    assert edited['tags'] == ['gpu']
+    assert edited['priority'] == 90
+
+    pro_db.delete_node(nid)
+    assert pro_db.get_node(nid) is None

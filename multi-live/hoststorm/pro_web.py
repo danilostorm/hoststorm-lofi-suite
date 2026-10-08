@@ -11,12 +11,12 @@ from .auth import require_role
 from .broadcast import delete_block, list_blocks, save_block
 from .clips import create_clip, list_recordings
 from .db import get_channel, list_channels, list_history, list_schedules
-from .distributed import upsert_snapshot
+from .distributed import _request, upsert_snapshot
 from .integrations import check_integration, delete_integration, list_integrations, save_integration
 from .media import list_files, scan_library
 from .pro_db import (
     ack_alert, add_alert, add_marker, authenticate_token, choose_node, create_token, list_alerts,
-    list_backups, list_markers, list_nodes, list_profiles, list_tokens, recent_metrics, save_node,
+    delete_node, get_node, list_backups, list_markers, list_nodes, list_profiles, list_tokens, recent_metrics, save_node,
     save_profile, update_node_health,
 )
 from .professional import cleanup, create_backup, diagnose, encoder_capabilities, import_url, restore_backup, system_snapshot, watch_scan
@@ -79,10 +79,105 @@ def profiles():
 def nodes():
     if request.method=='POST':
         try:
-            save_node({'id':request.form.get('id') or None,'name':request.form.get('name','').strip(),'base_url':request.form.get('base_url','').strip(),'token':request.form.get('token','').strip(),'priority':request.form.get('priority',100),'enabled':request.form.get('enabled')=='on','tags':[x.strip() for x in request.form.get('tags','').split(',') if x.strip()]});flash('Servidor salvo.','success')
+            editing=bool(request.form.get('id'))
+            save_node({
+                'id':request.form.get('id') or None,
+                'name':request.form.get('name','').strip(),
+                'base_url':request.form.get('base_url','').strip(),
+                'token':request.form.get('token','').strip(),
+                'priority':request.form.get('priority',100),
+                'enabled':request.form.get('enabled')=='on',
+                'tags':[x.strip() for x in request.form.get('tags','').split(',') if x.strip()],
+            })
+            flash('Servidor atualizado.' if editing else 'Servidor registrado.','success')
         except Exception as e:flash(str(e),'error')
         return redirect(url_for('pro.nodes'))
     return render_template('nodes.html',nodes=list_nodes(),best=choose_node())
+
+
+def _node_config_references(nid):
+    refs=[]
+    for cid,channel in list_channels(False).items():
+        if str(channel.get('node_mode') or '')=='specific' and str(channel.get('node_id') or '')==str(nid):
+            refs.append(f"{channel.get('name') or cid} (padrão do canal)")
+        for slug,destination in (channel.get('destinations') or {}).items():
+            if str(destination.get('output_node_mode') or '')=='specific' and str(destination.get('output_node_id') or '')==str(nid):
+                refs.append(f"{channel.get('name') or cid} / {destination.get('label') or slug}")
+    return refs
+
+
+@pro_bp.route('/professional/nodes/<nid>/toggle',methods=['POST'])
+@require_role('admin')
+def node_toggle(nid):
+    node=get_node(nid)
+    if not node:
+        abort(404)
+    node['enabled']=not bool(node.get('enabled'))
+    save_node(node)
+    flash(('Servidor habilitado: ' if node['enabled'] else 'Servidor desabilitado: ')+str(node.get('name') or nid),'success')
+    return redirect(url_for('pro.nodes'))
+
+
+@pro_bp.route('/professional/nodes/<nid>/refresh',methods=['POST'])
+@require_role('admin')
+def node_refresh(nid):
+    node=get_node(nid)
+    if not node:
+        abort(404)
+    try:
+        payload=_request(node,'/api/v1/status',timeout=8)
+        if not payload.get('ok'):
+            raise RuntimeError(payload.get('error') or payload.get('message') or 'Agent não respondeu OK.')
+        system=payload.get('system') or {}
+        active=0
+        for channel in (payload.get('channels') or {}).values():
+            active+=sum(1 for state in (channel.get('platforms') or {}).values() if state.get('running'))
+        gpu_value=system.get('gpu')
+        gpu=float(gpu_value) if isinstance(gpu_value,(int,float)) else float(node.get('gpu') or 0)
+        update_node_health(
+            nid,
+            float(system.get('cpu') or 0),
+            float(system.get('ram') or 0),
+            gpu,
+            active,
+            'online',
+        )
+        flash(f"Status atualizado: {node.get('name') or nid} · {active} stream(s).",'success')
+    except Exception as exc:
+        update_node_health(
+            nid,
+            float(node.get('cpu') or 0),
+            float(node.get('ram') or 0),
+            float(node.get('gpu') or 0),
+            int(node.get('active_streams') or 0),
+            'offline',
+        )
+        flash('Falha atualizando o servidor: '+str(exc),'error')
+    return redirect(url_for('pro.nodes'))
+
+
+@pro_bp.route('/professional/nodes/<nid>/delete',methods=['POST'])
+@require_role('admin')
+def node_delete(nid):
+    node=get_node(nid)
+    if not node:
+        abort(404)
+    refs=_node_config_references(nid)
+    try:
+        from .cluster_v5 import _assignments
+        active=[a for a in _assignments(desired_only=True) if str(a.get('node_id'))==str(nid)]
+    except Exception:
+        active=[]
+    if active:
+        flash(f"Não é possível excluir {node.get('name') or nid}: existem {len(active)} saída(s) ativa(s) vinculadas. Pare ou migre primeiro.",'error')
+        return redirect(url_for('pro.nodes'))
+    if refs:
+        preview=', '.join(refs[:3]) + ('…' if len(refs)>3 else '')
+        flash(f"Não é possível excluir {node.get('name') or nid}: ele ainda está selecionado em {len(refs)} configuração(ões): {preview}",'error')
+        return redirect(url_for('pro.nodes'))
+    delete_node(nid)
+    flash(f"Servidor excluído: {node.get('name') or nid}.",'success')
+    return redirect(url_for('pro.nodes'))
 
 @pro_bp.route('/professional/diagnostics')
 @require_role('operator')

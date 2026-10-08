@@ -4,7 +4,7 @@
 {% block subheading %}Instalação automática por SSH, Agents, seleção por saída e failover persistente.{% endblock %}
 {% block content %}
 <style>
-.cluster-install-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.cluster-install-grid .full{grid-column:1/-1}.cluster-install-log{margin-top:12px;min-height:120px;max-height:260px;overflow:auto;background:#050b13;border:1px solid rgba(125,145,185,.2);border-radius:10px;padding:10px;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap}.cluster-note{font-size:.76rem;opacity:.72;line-height:1.45;margin-top:10px}.cluster-state{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:.8rem}.cluster-state strong{color:#79e7aa}.cluster-secret-note{padding:9px 10px;border:1px solid rgba(93,214,255,.17);border-radius:9px;background:rgba(93,214,255,.04);font-size:.76rem;line-height:1.4}.cluster-actions{display:flex;gap:8px;flex-wrap:wrap}@media(max-width:760px){.cluster-install-grid{grid-template-columns:1fr}}
+.cluster-install-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.cluster-install-grid .full{grid-column:1/-1}.cluster-install-log{margin-top:12px;min-height:120px;max-height:260px;overflow:auto;background:#050b13;border:1px solid rgba(125,145,185,.2);border-radius:10px;padding:10px;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap}.cluster-note{font-size:.76rem;opacity:.72;line-height:1.45;margin-top:10px}.cluster-state{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:.8rem}.cluster-state strong{color:#79e7aa}.cluster-secret-note{padding:9px 10px;border:1px solid rgba(93,214,255,.17);border-radius:9px;background:rgba(93,214,255,.04);font-size:.76rem;line-height:1.4}.cluster-actions{display:flex;gap:8px;flex-wrap:wrap}.cluster-node-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}.cluster-node-actions form{margin:0}.cluster-node-edit{margin-top:12px;padding:12px;border:1px solid rgba(125,145,185,.18);border-radius:10px;background:rgba(8,17,30,.45)}.cluster-node-edit[hidden]{display:none}.cluster-node-edit-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.cluster-node-edit-grid .full{grid-column:1/-1}.cluster-update-banner{padding:9px 10px;border:1px solid rgba(124,92,224,.35);background:rgba(124,92,224,.08);border-radius:9px;font-size:.78rem;margin-bottom:12px}.cluster-update-banner[hidden]{display:none}@media(max-width:760px){.cluster-install-grid,.cluster-node-edit-grid{grid-template-columns:1fr}.cluster-node-edit-grid .full{grid-column:auto}}
 </style>
 <div class="dashboard-grid">
   <section class="panel span-2">
@@ -12,19 +12,42 @@
     {% if best %}<div class="recommend-card"><span>Melhor nó agora</span><strong>{{best.name}}</strong><small>CPU {{best.cpu|round(1)}}% · RAM {{best.ram|round(1)}}% · prioridade {{best.priority}}</small></div>{% endif %}
     <div class="node-grid">
       {% for n in nodes %}
-      <div class="node-card big">
+      <div class="node-card big" data-node-card="{{n.id}}">
         <div class="node-head"><div><span class="dot {{'online' if n.status in ['online','local'] else ''}}"></span><strong>{{n.name}}</strong></div><span class="status-pill {{'running' if n.status in ['online','local'] else 'offline'}}">{{n.status}}</span></div>
-        <div class="profile-specs"><span>CPU {{n.cpu|round(1)}}%</span><span>RAM {{n.ram|round(1)}}%</span><span>GPU {{n.gpu|round(1)}}%</span><span>{{n.active_streams}} streams</span><span>P{{n.priority}}</span></div>
+        <div class="profile-specs"><span>CPU {{n.cpu|round(1)}}%</span><span>RAM {{n.ram|round(1)}}%</span><span>GPU {{n.gpu|round(1)}}%</span><span>{{n.active_streams}} streams</span><span>P{{n.priority}}</span>{% if not n.enabled %}<span>DESABILITADO</span>{% endif %}</div>
         <small>{{n.base_url}}</small>
         <div class="platform-line">{% for t in n.tags %}<span class="platform-chip">{{t}}</span>{% endfor %}</div>
+        <div class="cluster-node-actions">
+          <button type="button" class="btn ghost js-node-edit">Editar</button>
+          <form action="{{url_for('pro.node_refresh',nid=n.id)}}" method="post"><button class="btn ghost">Atualizar status</button></form>
+          <form action="{{url_for('pro.node_toggle',nid=n.id)}}" method="post"><button class="btn ghost">{{'Desabilitar' if n.enabled else 'Habilitar'}}</button></form>
+          <button type="button" class="btn ghost js-node-update-agent"
+            data-node-id="{{n.id}}" data-node-name="{{n.name}}" data-node-url="{{n.base_url}}"
+            data-node-priority="{{n.priority}}" data-node-tags="{{n.tags|join(',')}}">Atualizar Agent</button>
+          <form action="{{url_for('pro.node_delete',nid=n.id)}}" method="post" onsubmit="return confirm('Excluir o servidor {{n.name}}? O HostStorm bloqueará a exclusão se ainda houver lives ou configurações usando este nó.')"><button class="btn danger subtle">Excluir</button></form>
+        </div>
+        <form method="post" class="cluster-node-edit" hidden>
+          <input type="hidden" name="id" value="{{n.id}}">
+          <div class="cluster-node-edit-grid">
+            <label>Nome<input name="name" value="{{n.name}}" required></label>
+            <label>URL base<input name="base_url" value="{{n.base_url}}" required></label>
+            <label>Prioridade<input type="number" name="priority" value="{{n.priority}}"></label>
+            <label>Tags<input name="tags" value="{{n.tags|join(',')}}" placeholder="gpu,nvenc,principal"></label>
+            <label class="full">Novo API token (opcional)<input type="password" name="token" placeholder="Deixe vazio para manter o token atual"></label>
+            <label class="check-row full"><input type="checkbox" name="enabled" {% if n.enabled %}checked{% endif %}> Habilitado para novas transmissões</label>
+            <div class="cluster-actions full"><button class="btn primary">Salvar alterações</button><button type="button" class="btn ghost js-node-edit-cancel">Cancelar</button></div>
+          </div>
+        </form>
       </div>
       {% else %}<div class="empty-state">Nenhum Agent remoto registrado ainda. Use “Instalar novo servidor” abaixo.</div>{% endfor %}
     </div>
   </section>
 
-  <section class="panel span-2">
-    <div class="panel-head"><div><h2>Instalar novo servidor</h2><p>Informe o acesso SSH uma única vez. O HostStorm prepara Docker, Agent, token e registra o nó automaticamente.</p></div></div>
+  <section class="panel span-2" id="clusterInstallPanel">
+    <div class="panel-head"><div><h2 id="clusterInstallTitle">Instalar novo servidor</h2><p id="clusterInstallSubtitle">Informe o acesso SSH uma única vez. O HostStorm prepara Docker, Agent, token e registra o nó automaticamente.</p></div></div>
+    <div class="cluster-update-banner" id="clusterUpdateBanner" hidden></div>
     <form id="clusterInstallForm" class="cluster-install-grid">
+      <input type="hidden" name="node_id" id="clusterInstallNodeId" value="">
       <label>Nome do servidor<input name="name" required placeholder="Oracle GPU / Unraid 2"></label>
       <label>IP ou hostname<input name="host" required placeholder="192.168.30.50 ou node.exemplo.com"></label>
       <label>Porta SSH<input name="ssh_port" type="number" value="22" min="1" max="65535"></label>
@@ -35,7 +58,7 @@
       <label>Tags opcionais<input name="tags" placeholder="principal,backup,gpu"></label>
       <label class="full">URL externa do Agent (opcional)<input name="base_url" placeholder="https://node.exemplo.com — vazio usa http://IP:3040"></label>
       <div class="cluster-secret-note full"><strong>Senha SSH não é salva.</strong> Ela existe somente em memória durante o provisionamento. Depois disso, Control Plane e Agent conversam por API autenticada com token próprio.</div>
-      <div class="cluster-actions full"><button class="btn primary" id="clusterInstallButton">Instalar e registrar servidor</button><span class="cluster-state" id="clusterInstallState"></span></div>
+      <div class="cluster-actions full"><button class="btn primary" id="clusterInstallButton">Instalar e registrar servidor</button><button class="btn ghost" type="button" id="clusterInstallCancelUpdate" hidden>Cancelar atualização</button><span class="cluster-state" id="clusterInstallState"></span></div>
     </form>
     <pre class="cluster-install-log" id="clusterInstallLog">Aguardando instalação…</pre>
   </section>
@@ -64,23 +87,94 @@
 <script>
 (()=>{
   const form=document.getElementById('clusterInstallForm');if(!form)return;
-  const button=document.getElementById('clusterInstallButton'),state=document.getElementById('clusterInstallState'),log=document.getElementById('clusterInstallLog');
+  const button=document.getElementById('clusterInstallButton');
+  const state=document.getElementById('clusterInstallState');
+  const log=document.getElementById('clusterInstallLog');
+  const title=document.getElementById('clusterInstallTitle');
+  const subtitle=document.getElementById('clusterInstallSubtitle');
+  const banner=document.getElementById('clusterUpdateBanner');
+  const cancelUpdate=document.getElementById('clusterInstallCancelUpdate');
+  const panel=document.getElementById('clusterInstallPanel');
   let timer=null;
+
+  const resetInstallMode=()=>{
+    form.reset();
+    form.elements.node_id.value='';
+    title.textContent='Instalar novo servidor';
+    subtitle.textContent='Informe o acesso SSH uma única vez. O HostStorm prepara Docker, Agent, token e registra o nó automaticamente.';
+    banner.hidden=true;banner.textContent='';
+    cancelUpdate.hidden=true;
+    button.textContent='Instalar e registrar servidor';
+    state.textContent='';
+    log.textContent='Aguardando instalação…';
+  };
+
+  document.querySelectorAll('.js-node-edit').forEach(btn=>btn.addEventListener('click',()=>{
+    const card=btn.closest('[data-node-card]');
+    const edit=card?.querySelector('.cluster-node-edit');if(!edit)return;
+    edit.hidden=!edit.hidden;
+  }));
+  document.querySelectorAll('.js-node-edit-cancel').forEach(btn=>btn.addEventListener('click',()=>{
+    const edit=btn.closest('.cluster-node-edit');if(edit)edit.hidden=true;
+  }));
+
+  document.querySelectorAll('.js-node-update-agent').forEach(btn=>btn.addEventListener('click',()=>{
+    resetInstallMode();
+    const baseUrl=btn.dataset.nodeUrl||'';
+    let host='';
+    try{
+      const parsed=new URL(baseUrl);
+      host=parsed.hostname||'';
+      form.elements.agent_port.value=parsed.port||((parsed.protocol==='https:')?'443':'3040');
+    }catch(_){host='';}
+    form.elements.node_id.value=btn.dataset.nodeId||'';
+    form.elements.name.value=btn.dataset.nodeName||'';
+    form.elements.host.value=host;
+    form.elements.base_url.value=baseUrl;
+    form.elements.priority.value=btn.dataset.nodePriority||'100';
+    form.elements.tags.value=btn.dataset.nodeTags||'';
+    form.elements.username.value='root';
+    form.elements.password.value='';
+    title.textContent='Atualizar HostStorm Agent';
+    subtitle.textContent='O mesmo bootstrap SSH será executado no servidor existente, mantendo o ID do nó e renovando o Agent/token.';
+    banner.hidden=false;
+    banner.textContent='Atualizando: '+(btn.dataset.nodeName||btn.dataset.nodeId)+'. Informe novamente usuário e senha SSH; a senha não será armazenada. A atualização reinicia o Agent e pode interromper temporariamente as lives que estiverem neste nó.';
+    cancelUpdate.hidden=false;
+    button.textContent='Atualizar Agent neste servidor';
+    panel?.scrollIntoView({behavior:'smooth',block:'start'});
+    setTimeout(()=>form.elements.password.focus(),350);
+  }));
+  cancelUpdate?.addEventListener('click',resetInstallMode);
+
   const paint=job=>{
     log.textContent=(job.logs||[]).join('\n')||job.message||'Processando…';log.scrollTop=log.scrollHeight;
     state.innerHTML=job.status==='success'?'<strong>✓ Servidor online</strong>':job.status==='error'?'<span style="color:#ff8585">✕ Falha</span>':'<span>● '+(job.message||'Instalando…')+'</span>';
-    if(job.status==='success'||job.status==='error'){clearInterval(timer);timer=null;button.disabled=false;if(job.status==='success')setTimeout(()=>location.reload(),1200);}
+    if(job.status==='success'||job.status==='error'){
+      clearInterval(timer);timer=null;button.disabled=false;
+      if(job.status==='success')setTimeout(()=>location.reload(),1200);
+    }
   };
   form.addEventListener('submit',async event=>{
-    event.preventDefault();button.disabled=true;state.textContent='Iniciando…';log.textContent='Preparando provisionamento…';
+    event.preventDefault();
+    const updating=!!form.elements.node_id.value;
+    button.disabled=true;
+    state.textContent=updating?'Atualizando…':'Iniciando…';
+    log.textContent=updating?'Preparando atualização do Agent…':'Preparando provisionamento…';
     try{
       const response=await fetch('/professional/nodes/install',{method:'POST',body:new FormData(form),headers:{'X-Requested-With':'HostStorm'},cache:'no-store'});
       const data=await response.json();if(!response.ok||!data.ok)throw new Error(data.message||`HTTP ${response.status}`);
       const id=data.job_id;
       timer=setInterval(async()=>{
-        try{const r=await fetch('/api/cluster/install/'+encodeURIComponent(id),{cache:'no-store'});const p=await r.json();if(r.ok&&p.ok)paint(p.job);}catch(_){/* retry */}
+        try{
+          const r=await fetch('/api/cluster/install/'+encodeURIComponent(id),{cache:'no-store'});
+          const p=await r.json();if(r.ok&&p.ok)paint(p.job);
+        }catch(_){/* retry */}
       },1500);
-    }catch(error){button.disabled=false;state.innerHTML='<span style="color:#ff8585">✕ '+String(error.message||error)+'</span>';log.textContent+=`\nERRO: ${error.message||error}`;}
+    }catch(error){
+      button.disabled=false;
+      state.innerHTML='<span style="color:#ff8585">✕ '+String(error.message||error)+'</span>';
+      log.textContent+='\nERRO: '+String(error.message||error);
+    }
   });
 })();
 </script>

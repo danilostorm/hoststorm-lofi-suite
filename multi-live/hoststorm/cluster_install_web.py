@@ -70,6 +70,7 @@ def _install(job_id: str, payload: dict):
 def install_node():
     body = request.get_json(silent=True) or request.form
     payload = {
+        'node_id': str(body.get('node_id') or '').strip(),
         'name': str(body.get('name') or '').strip(),
         'host': str(body.get('host') or '').strip(),
         'ssh_port': body.get('ssh_port') or 22,
@@ -86,7 +87,7 @@ def install_node():
     job_id = secrets.token_hex(8)
     _job_update(job_id, status='queued', message='Provisionamento agendado.')
     threading.Thread(target=_install, args=(job_id, payload), daemon=True, name=f'cluster-install-{job_id[:6]}').start()
-    return jsonify({'ok': True, 'job_id': job_id, 'message': 'Instalação iniciada.'}), 202
+    return jsonify({'ok': True, 'job_id': job_id, 'message': 'Atualização iniciada.' if payload.get('node_id') else 'Instalação iniciada.'}), 202
 
 
 @cluster_install_bp.route('/api/cluster/install/<job_id>')

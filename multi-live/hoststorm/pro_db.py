@@ -280,6 +280,22 @@ def list_nodes():
         return out
 
 
+def get_node(nid):
+    with connect() as con:
+        row=con.execute('SELECT * FROM nodes WHERE id=?',(str(nid),)).fetchone()
+    if not row:
+        return None
+    data=dict(row)
+    data['token']=decrypt_secret(data.pop('token_enc',''))
+    data['tags']=json.loads(data.pop('tags_json') or '[]')
+    return data
+
+
+def delete_node(nid):
+    with connect() as con:
+        con.execute('DELETE FROM nodes WHERE id=?',(str(nid),))
+
+
 def save_node(data):
     nid=data.get('id') or uuid.uuid4().hex[:12]; ts=now_iso()
     with connect() as con:
