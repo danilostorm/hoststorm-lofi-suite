@@ -138,7 +138,7 @@
     title.textContent='Atualizar HostStorm Agent';
     subtitle.textContent='O mesmo bootstrap SSH será executado no servidor existente, mantendo o ID do nó e renovando o Agent/token.';
     banner.hidden=false;
-    banner.textContent='Atualizando: '+(btn.dataset.nodeName||btn.dataset.nodeId)+'. Informe novamente usuário e senha SSH; a senha não será armazenada.';
+    banner.textContent='Atualizando: '+(btn.dataset.nodeName||btn.dataset.nodeId)+'. Informe novamente usuário e senha SSH; a senha não será armazenada. A atualização reinicia o Agent e pode interromper temporariamente as lives que estiverem neste nó.';
     cancelUpdate.hidden=false;
     button.textContent='Atualizar Agent neste servidor';
     panel?.scrollIntoView({behavior:'smooth',block:'start'});
