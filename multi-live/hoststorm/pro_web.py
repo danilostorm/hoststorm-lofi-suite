@@ -138,7 +138,7 @@ def node_refresh(nid):
             nid,
             float(system.get('cpu') or 0),
             float(system.get('ram') or 0),
-            gpu_value,
+            gpu,
             active,
             'online',
         )
